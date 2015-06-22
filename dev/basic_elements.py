@@ -78,10 +78,12 @@ class ReduceWriter( object ):
 
 # ---- map and reduce implementations ----
 def map( key, value ):
-    words = value.split()
+    remove = ".,?:;!\""
+    trans = str.maketrans(remove, ' ' * len(remove))
+
+    words = value.translate( trans ).split()
     for word in words:
         # remove comma's, they create issues for our file format
-        word = word.translate( None, ".,?!\"" )
         word = word.lower()
         if word[0] in 'abcde':
             yield 'a2e', word, 1
@@ -92,7 +94,7 @@ def map( key, value ):
         elif word[0] in 'tuvwxyz':
             yield 't2z', word, 1
         else:
-            yield 'default', word, 1
+            yield '_default', word, 1
 
 def reduce( key, list_of_values ):
     yield (key, sum(list_of_values))
@@ -115,7 +117,7 @@ if __name__ == '__main__':
     partitions[ "f2n" ] = Partitioner( "../im/f2n/part-r-0000.txt" )
     partitions[ "o2s" ] = Partitioner( "../im/o2s/part-r-0000.txt" )
     partitions[ "t2z" ] = Partitioner( "../im/t2z/part-r-0000.txt" )
-    partitions[ "default" ] = Partitioner( "../im/default/part-r-0000.txt" )
+    partitions[ "_default" ] = Partitioner( "../im/default/part-r-0000.txt" )
 
     # Map it.
     for k1, v1 in fr.read():
@@ -144,7 +146,7 @@ if __name__ == '__main__':
     partitions[ "f2n" ] = PartFileReader( "../im/f2n/part-r-0000.txt" )
     partitions[ "o2s" ] = PartFileReader( "../im/o2s/part-r-0000.txt" )
     partitions[ "t2z" ] = PartFileReader( "../im/t2z/part-r-0000.txt" )
-    partitions[ "default" ] = PartFileReader( "../im/default/part-r-0000.txt" )
+    partitions[ "_default" ] = PartFileReader( "../im/default/part-r-0000.txt" )
 
     # A way to output the results of the reduce operation.
     rw = ReduceWriter( "../im/result-r-0000.txt" )
