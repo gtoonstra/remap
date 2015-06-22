@@ -3,7 +3,8 @@
 Remap is an implementation of MapReduce in pure python.
 
 The name is derived from the stages of reduce, map and python: REduce MApper Python
-and the name itself is a pretty powerful reference that should be easy to remember.
+
+and its order suggests there's some remapping to be done. Other than that, the name itself is a pretty powerful reference that should be easy to remember.
 
 The focus of this implementation is on:
 - Very low complexity and number of steps for installation
