@@ -11,6 +11,6 @@ if __name__ == "__main__":
     lpub.send( "test" )
 
     while( True ):
-        lpub.send( "test" )
-        time.sleep( 0.5 )
+        lpub.send( "global.test.09325235325_12124 {}" )
+        time.sleep( 5 )
 

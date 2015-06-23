@@ -3,6 +3,7 @@ import os
 import nanomsg as nn
 from nanomsg import wrapper as nn_wrapper
 import logging
+import time
 
 parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent)
@@ -11,7 +12,6 @@ import lib.remap_utils as remap_utils
 
 # A core daemon connects to the node daemon.
 # Core daemons manage the map/reduce processes doing the actual work.
-# The node daemon reroutes broker messages on behalf of the core.
 # 
 # The core alternates between work and reading messages from the node
 # The volume of messages isn't very high, it's mostly about planning and
@@ -25,7 +25,8 @@ logger = logging.getLogger("CoreDaemon")
 
 class CoreDaemon( object ):
     def __init__(self):
-        self.coreid = "NONE" 
+        self.pid = os.getpid()
+        self.coreid = "unknown" 
         self.node = None
 
     # The core daemon connects to the node first.
@@ -41,21 +42,31 @@ class CoreDaemon( object ):
         try:
             msg = self.node.recv()
             logger.info( "Received message from node: %s"%( msg ))
-            msgtype, data = remap_utils.unpack_msg( msg )
-            if msgtype == self.coreid:
+            msgprefix, data = remap_utils.unpack_msg( msg )
+            recipientid,msgtype,senderid = msgprefix.split(".")
+
+            if recipientid == self.coreid:
                 # This is directed at this core specifically, so it's more of a req/rep type
-                return self.process_request( data )
-            return False
+                self.process_personal_message( msgtype, senderid, data )
+            if recipientid == "global":
+                self.process_global_message( msgtype, senderid, data )
+            elif recipientid == "local":
+                self.process_local_message( msgtype, senderid, data )    
+            elif recipientid == "notlocal":
+                self.process_global_message( msgtype, senderid, data )
+            else:
+                logger.info("Unrecognized message type %s, sent by %s"%( msgtype, senderid ) )
+            return True
         except nn.NanoMsgAPIError as e:
             return False
 
+    # this function registers the new core process with node
     def register( self ):
-        # Let's start with getting some meaningful identification stuff from node.
-        self.set_node_timeout( 1000 )
+        self.set_node_timeout( 500 )
         msgid = remap_utils.unique_id()
 
         logger.info( "Registering with node" )
-        self.node.send( remap_utils.pack_msg( "hello", {"msgid":msgid} ) )
+        self.node.send( remap_utils.pack_msg( "_hello", {"msgid":msgid,"pid":self.pid} ) )
 
         # The while loop will terminate as soon as node stops sending messages,
         # so this should be safe to do.
@@ -63,13 +74,14 @@ class CoreDaemon( object ):
             try:
                 msg = self.node.recv()
                 msgtype, data = remap_utils.unpack_msg( msg )
-                if msgtype != "hey":
+                if msgtype != "_hey":
                     continue
                 if "msgid" in data:
+                    # make sure that this 'hey' message is for this core.
+                    # multiple cores may be registering at the same time.
                     if data["msgid"] == msgid:
                         self.coreid = data["coreid"]
-                        self.broker_address = data["broker_address" ]
-                        logger.info( "Got coreid %s and broker address %s."%( self.coreid, self.broker_address ))
+                        logger.info( "Got coreid %s."%( self.coreid ))
                         return True
             except nn.NanoMsgAPIError as e:
                 logger.error( "Node is currently not available." )
@@ -77,16 +89,27 @@ class CoreDaemon( object ):
         logger.error( "Registration failed" )
         return False
 
+    def process_personal_message( self, msgtype, sender, data ):
+        pass
+
+    def process_global_message( self, msgtype, sender, data ):
+        pass
+
+    def process_local_message( self, msgtype, sender, data ):
+        pass
+
     def do_more_work( self ):
         pass
 
 if __name__ == "__main__":
 
-    # Initialization of the core. We need a core id to work with (from node),
-    # and the address of the broker
+    # Initialization of the core. We need a core id to work with (from node).
     core = CoreDaemon()
     core.setup_node()
-    
+
+    # wait 50ms for node comms to be established
+    time.sleep( 0.05 )
+
     # 5 attempts to register
     attempts = 5
     registered = False
@@ -97,13 +120,13 @@ if __name__ == "__main__":
         attempts = attempts - 1
 
     if not registered:
-        logger.error( "Could not register with node to get a core id and connect to broker." )
+        logger.error( "Could not register with node to get a core id. Exiting." )
         sys.exit(-1)
 
     core.set_node_timeout( 0 )
 
     while( True ):
         while (core.process_node_messages()):
-            pas
+            pass
         core.do_more_work()
 

@@ -12,12 +12,13 @@ sys.path.insert(0, parent)
 
 import lib.remap_utils as remap_utils
 
-# A node daemon doesn't connect to the broker, but exists to allow
+# A node daemon connects to the broker and exists to allow
 # cores to work independently. The idea is that the node daemon is a central
 # contact point for concerns like machine health, hardware, proximity, 
-# planned up/down time? and get notified about other things that are going on
-# on the hardware without each core having to install the same callbacks or hooks.
-# 
+# planned up/down time and that node routes messages from the bus to each core,
+# which should reduce some potential waste if each core process has its own 
+# code to discard messages, etc.
+#
 # The node daemon, together with other processes, is expected to be allocated one core
 # of the machine, leaving (num_cores-1) free for core processes.
 # 
@@ -33,6 +34,8 @@ class NodeDaemon( object ):
         self.broker_address = "unknown"
         self.brokerChanged = False
         self.sub = None
+        self.pub = None
+        self.nodeid = remap_utils.node_id()
         self.bonjour = BonjourResolver( "_remap._tcp", self.cb_broker_changed )
         self.bonjour.start()
 
@@ -78,23 +81,45 @@ class NodeDaemon( object ):
         self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "notlocal")
         # self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.coreid)
         self.apply_timeouts()
+
+        self.pub = nn.Socket( nn.PUB )
+        self.pub.connect( "tcp://%s:8686"%( self.broker_address ))
+
         logger.info("Broker setup complete")
 
-    def process_node_messages( self ):
+    def process_bus_messages( self ):
         try:
             msg = self.bus.recv()
             msgtype, data = remap_utils.unpack_msg( msg )
-            if msgtype == "hello":
-                return self.process_hello( data )
+            if msgtype.startswith("_"):
+                # node message
+                self.process_core_message( msgtype, data )
+            else:
+                # forward to broker instead
+                self.forward_to_broker( msg )             
         except nn.NanoMsgAPIError as e:
-            pass
-        return False
+            return False
+        return True
 
+    def process_core_message( self, msgtype, data ):
+        if msgtype == "_hello":
+            self.process_hello( data )
+
+    def forward_to_broker( self, msg ):
+        if self.pub != None:
+            try:
+                self.pub.send( msg )
+            except nn.NanoMsgAPIError as e:
+                pass
+
+    # This processes a message where a core is announcing itself and wants to 
+    # get a core id to start existing on the network    
     def process_hello( self, data ):
-        msgid = data[ "msgid" ]
-        coreid = "12345"
+        msgid = remap_utils.safe_get(data, "msgid")
+        pid = remap_utils.safe_get(data, "pid")
+        coreid = remap_utils.core_id( self.nodeid, pid )
         self.cores[ coreid ] = {"coreid":coreid,"ts_last_seen":time.time()}
-        msg = remap_utils.pack_msg( "hey", {"result":"OK","msgid":msgid,"coreid":coreid,"broker_address":self.broker_address} )
+        msg = remap_utils.pack_msg( "_hey", {"result":"OK","msgid":msgid,"coreid":coreid} )
         self.bus.send( msg )
         return True
 
@@ -116,16 +141,8 @@ class NodeDaemon( object ):
                 msgprefix, data = remap_utils.unpack_msg( msg )
 
                 logger.info( "Just received %s:%s", msgprefix, data )
+                self.bus.send(msg)
 
-                if msgprefix.startswith(self.coreid):
-                    # message unidirectionally sent to me.
-                    self.process_personal_message( msgprefix, data )
-                elif msgprefix.startswith( "global" ):
-                    self.process_global_message( msgprefix, data )
-                elif msgprefix.startswith( "local" ):
-                    self.process_local_message( msgprefix, data )    
-                elif msgprefix.startswith( "notlocal" ):
-                    self.process_global_message( msgprefix, data ) 
                 return True
         except nn.NanoMsgAPIError as e:
             return False
@@ -133,15 +150,6 @@ class NodeDaemon( object ):
             logger.warn("Received invalid message: %s"%( msg ))
             return False
         return False
- 
-    def process_personal_message( self, prefix, data ):
-        pass
-
-    def process_global_message( self, prefix, data ):
-        pass
-
-    def process_local_message( self, prefix, data ):
-        pass
 
 if __name__ == "__main__":
     logger.info("Starting node daemon")
@@ -152,7 +160,7 @@ if __name__ == "__main__":
     logger.info("Node daemon started")
 
     while( True ):
-        while (node.process_node_messages()):
+        while (node.process_bus_messages()):
             pass
         while (node.process_broker_messages()):
             pass

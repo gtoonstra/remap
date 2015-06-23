@@ -22,12 +22,7 @@ class BonjourResolver( object ):
     def resolve_callback(self, sdRef, flags, interfaceIndex, errorCode, fullname,
                          hosttarget, port, txtRecord):
         if errorCode == pybonjour.kDNSServiceErr_NoError:
-            logger.info( 'Resolved service:')
-            logger.info( '  fullname   = %s'%( fullname))
-            logger.info( '  hosttarget = %s'%( hosttarget))
-            logger.info( '  port       = %d'%( port))
-            logger.info( '  interface  = %d'%( interfaceIndex))
-            logger.info( '  txtRec     = %s'%( txtRecord))
+            logger.info( 'Resolved service %s at %s'%( fullname, hosttarget ))
             self.resolved.append(True)
             self.hosttarget = hosttarget
             self.port = port
@@ -43,12 +38,11 @@ class BonjourResolver( object ):
             return
 
         if not (flags & pybonjour.kDNSServiceFlagsAdd):
-            logger.info( 'Service removed' )
+            logger.info( 'The service entry was removed' )
             self.callback( "unknown" )
             return
 
-        logger.info( 'Service added; resolving' )
-        logger.info( ' replyDomain: %s'%( replyDomain ) )
+        logger.info( 'Another service identified, resolving' )
 
         resolve_sdRef = pybonjour.DNSServiceResolve(0,
                                                     interfaceIndex,
@@ -61,7 +55,7 @@ class BonjourResolver( object ):
             while not self.resolved:
                 ready = select.select([resolve_sdRef], [], [], self.timeout)
                 if resolve_sdRef not in ready[0]:
-                    logger.info( 'Resolve timed out' )
+                    logger.info( 'Resolution timed out' )
                     break
                 pybonjour.DNSServiceProcessResult(resolve_sdRef)
             else:
