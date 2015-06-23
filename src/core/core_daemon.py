@@ -9,6 +9,7 @@ parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent)
 
 import lib.remap_utils as remap_utils
+from lib.remap_utils import RemapException
 
 # A core daemon connects to the node daemon.
 # Core daemons manage the map/reduce processes doing the actual work.
@@ -43,7 +44,7 @@ class CoreDaemon( object ):
             msg = self.node.recv()
             logger.info( "Received message from node: %s"%( msg ))
             msgprefix, data = remap_utils.unpack_msg( msg )
-            recipientid,msgtype,senderid = msgprefix.split(".")
+            recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
 
             if recipientid == self.coreid:
                 # This is directed at this core specifically, so it's more of a req/rep type
@@ -54,6 +55,8 @@ class CoreDaemon( object ):
                 self.process_local_message( msgtype, senderid, data )    
             elif recipientid == "notlocal":
                 self.process_global_message( msgtype, senderid, data )
+            elif recipientid == "node":
+                self.process_node_message( msgtype, senderid, data )
             else:
                 logger.info("Unrecognized message type %s, sent by %s"%( msgtype, senderid ) )
             return True
@@ -66,23 +69,24 @@ class CoreDaemon( object ):
         msgid = remap_utils.unique_id()
 
         logger.info( "Registering with node" )
-        self.node.send( remap_utils.pack_msg( "_hello", {"msgid":msgid,"pid":self.pid} ) )
+        self.node.send( remap_utils.pack_msg( "node._hello.%d"%(self.pid), {"msgid":msgid,"pid":self.pid} ) )
 
         # The while loop will terminate as soon as node stops sending messages,
         # so this should be safe to do.
         while True:
             try:
                 msg = self.node.recv()
-                msgtype, data = remap_utils.unpack_msg( msg )
+                msgprefix, data = remap_utils.unpack_msg( msg )
+                recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
                 if msgtype != "_hey":
                     continue
-                if "msgid" in data:
-                    # make sure that this 'hey' message is for this core.
-                    # multiple cores may be registering at the same time.
-                    if data["msgid"] == msgid:
-                        self.coreid = data["coreid"]
-                        logger.info( "Got coreid %s."%( self.coreid ))
-                        return True
+                
+                replymsgid = remap_utils.safe_get(data, "msgid")
+                if replymsgid == msgid:
+                    # this is us
+                    self.coreid = remap_utils.safe_get(data, "coreid" )
+                    logger.info( "Got coreid %s."%( self.coreid ))
+                    return True
             except nn.NanoMsgAPIError as e:
                 logger.error( "Node is currently not available." )
                 break
@@ -97,6 +101,10 @@ class CoreDaemon( object ):
 
     def process_local_message( self, msgtype, sender, data ):
         pass
+
+    def process_node_message( self, msgtype, sender, data ):
+        if msgtype == "_plzreg":
+            self.register()
 
     def do_more_work( self ):
         pass
@@ -114,10 +122,14 @@ if __name__ == "__main__":
     attempts = 5
     registered = False
     while ( attempts > 0 ):
-        if core.register():
-            registered = True
-            break
-        attempts = attempts - 1
+        try:
+            if core.register():
+                registered = True
+                break
+            attempts = attempts - 1
+        except RemapException as re:
+            logger.exception( re )
+            attempts = attempts - 1
 
     if not registered:
         logger.error( "Could not register with node to get a core id. Exiting." )
@@ -126,7 +138,15 @@ if __name__ == "__main__":
     core.set_node_timeout( 0 )
 
     while( True ):
-        while (core.process_node_messages()):
-            pass
-        core.do_more_work()
+        try:
+            while (core.process_node_messages()):
+                pass
+        except RemapException as re:
+            logger.exception( re )
+
+        try:
+            core.do_more_work()
+        except RemapException as re:
+            logger.exception( re )
+            # take other actions
 

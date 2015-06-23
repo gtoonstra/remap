@@ -11,6 +11,7 @@ parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent)
 
 import lib.remap_utils as remap_utils
+from lib.remap_utils import RemapException
 
 # A node daemon connects to the broker and exists to allow
 # cores to work independently. The idea is that the node daemon is a central
@@ -35,6 +36,7 @@ class NodeDaemon( object ):
         self.brokerChanged = False
         self.sub = None
         self.pub = None
+        self.tot_m_rcv = 0
         self.nodeid = remap_utils.node_id()
         self.bonjour = BonjourResolver( "_remap._tcp", self.cb_broker_changed )
         self.bonjour.start()
@@ -79,7 +81,8 @@ class NodeDaemon( object ):
         self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "global")
         self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "local")
         self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "notlocal")
-        # self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.coreid)
+        for coreid in self.cores:
+            self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, coreid)
         self.apply_timeouts()
 
         self.pub = nn.Socket( nn.PUB )
@@ -90,16 +93,18 @@ class NodeDaemon( object ):
     def process_bus_messages( self ):
         try:
             msg = self.bus.recv()
-            msgtype, data = remap_utils.unpack_msg( msg )
+            msgprefix, data = remap_utils.unpack_msg( msg )
+            recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
+
             if msgtype.startswith("_"):
                 # node message
                 self.process_core_message( msgtype, data )
             else:
                 # forward to broker instead
                 self.forward_to_broker( msg )             
+            return True
         except nn.NanoMsgAPIError as e:
             return False
-        return True
 
     def process_core_message( self, msgtype, data ):
         if msgtype == "_hello":
@@ -119,9 +124,10 @@ class NodeDaemon( object ):
         pid = remap_utils.safe_get(data, "pid")
         coreid = remap_utils.core_id( self.nodeid, pid )
         self.cores[ coreid ] = {"coreid":coreid,"ts_last_seen":time.time()}
-        msg = remap_utils.pack_msg( "_hey", {"result":"OK","msgid":msgid,"coreid":coreid} )
+        msg = remap_utils.pack_msg( "%s._hey.%s"%(coreid, self.nodeid), {"result":"OK","msgid":msgid,"coreid":coreid} )
+        if self.sub != None:
+            self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, coreid)
         self.bus.send( msg )
-        return True
 
     def process_broker_messages( self ):
         if self.sub == None:
@@ -136,20 +142,21 @@ class NodeDaemon( object ):
                 return False
 
         try:
+            # Grab next msg from broker if any
             msg = self.sub.recv()
+            self.tot_m_rcv = self.tot_m_rcv + 1
             if msg != None and len(msg)>0:
                 msgprefix, data = remap_utils.unpack_msg( msg )
-
-                logger.info( "Just received %s:%s", msgprefix, data )
                 self.bus.send(msg)
-
                 return True
+            else:
+                return False
         except nn.NanoMsgAPIError as e:
             return False
-        except ValueError as ve:
-            logger.warn("Received invalid message: %s"%( msg ))
-            return False
-        return False
+
+    def req_registration( self ):
+        msg = remap_utils.pack_msg( "node._plzreg.%s"%(self.nodeid), {} )
+        self.bus.send( msg )
 
 if __name__ == "__main__":
     logger.info("Starting node daemon")
@@ -157,15 +164,25 @@ if __name__ == "__main__":
     node.setup_bus()
     node.apply_timeouts()
 
+    # wait 50ms to establish local connection
+    time.sleep( 0.1 )
+
+    # nanomsg doesn't event when a connection is lost
+    # so we explicitly request reregistration of cores.
+    node.req_registration()
+
     logger.info("Node daemon started")
 
     while( True ):
-        while (node.process_bus_messages()):
-            pass
-        while (node.process_broker_messages()):
-            pass
-        if node.brokerChanged:
-            node.setup_broker()
+        try:
+            while (node.process_bus_messages()):
+                pass
+            while (node.process_broker_messages()):
+                pass
+            if node.brokerChanged:
+                node.setup_broker()
+        except RemapException as re:
+            logger.exception( re )
 
         # Every now and then check core heartbeats and remove cores no longer active.
 
