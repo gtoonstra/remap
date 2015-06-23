@@ -164,8 +164,8 @@ if __name__ == "__main__":
     node.setup_bus()
     node.apply_timeouts()
 
-    # wait 50ms to establish local connection
-    time.sleep( 0.1 )
+    # wait 200ms to find broker, establish local connection
+    time.sleep( 0.2 )
 
     # nanomsg doesn't event when a connection is lost
     # so we explicitly request reregistration of cores.

@@ -85,7 +85,7 @@ class CoreDaemon( object ):
                 if replymsgid == msgid:
                     # this is us
                     self.coreid = remap_utils.safe_get(data, "coreid" )
-                    logger.info( "Got coreid %s."%( self.coreid ))
+                    logger.info( "Received coreid %s."%( self.coreid ))
                     return True
             except nn.NanoMsgAPIError as e:
                 logger.error( "Node is currently not available." )
