@@ -4,6 +4,14 @@ This is all pure python code, so you should be able to run on windows, mac osx o
 On linux and windows, you need to have avahi or bonjour-equivalent things installed, on osx this
 just works.
 
+> cd /tmp
+> git clone git@github.com:nanomsg/nanomsg.git
+> cd nanomsg
+> ./autogen.sh
+> ./configure
+> make
+> sudo make install
+> sudo apt-get install python3-pip
 > sudo python3.4 -m pip install nanomsg
 > cd /tmp
 > git clone git@github.com:depl0y/pybonjour-python3.git

@@ -31,6 +31,7 @@ class NodeDaemon( object ):
     def __init__(self):
         self.cores = {}
         self.broker_address = "localhost"
+        self.sub = None
 
     # Create a bi-directional communication channel, where the node daemon 
     # 'shouts' in the room even to contact a single core, but the core only
@@ -44,18 +45,31 @@ class NodeDaemon( object ):
         rcv_timeout = 100
         self.bus.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )
 
-    def process_messages( self ):
+    def setup_broker( self ):
+        if self.sub != None:
+            self.sub.close()
+            self.sub = None
+
+        if self.broker_address == "unknown":
+            logger.error("Cannot setup broker yet. Address unknown.")
+            return
+
+        self.sub = nn.Socket( nn.SUB )
+        self.sub.connect( "tcp://%s:8687"%( self.broker_address ))
+        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "global")
+        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "local")
+        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.coreid)
+        self.sub.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, 0 )
+        logger.info("Broker setup complete")
+
+    def process_node_messages( self ):
         try:
             msg = self.bus.recv()
-            self.process( msg )
+            msgtype, data = remap_utils.unpack_msg( msg )
+            if msgtype == "hello":
+                return self.process_hello( data )
         except nn.NanoMsgAPIError as e:
             pass
-
-    def process( self, msg ):
-        # It's always msgtype plus bunch of data, separated by space. 
-        msgtype, data = remap_utils.unpack_msg( msg )
-        if msgtype == "hello":
-            return self.process_hello( data )
 
     def process_hello( self, data ):
         msgid = data[ "msgid" ]
@@ -65,12 +79,51 @@ class NodeDaemon( object ):
         self.bus.send( msg )
         return
 
+    def process_broker_messages( self ):
+        if self.sub == None:
+            # No broker is known yet. 
+            return False
+
+        try:
+            msg = self.sub.recv()
+            if msg != None and len(msg)>0:
+                msgprefix, data = remap_utils.unpack_msg( msg )
+
+                logger.info( "Just received %s:%s", msgprefix, data )
+
+                if msgprefix.startswith(self.coreid):
+                    # message unidirectionally sent to me.
+                    self.process_personal_message( msgprefix, data )
+                elif msgprefix.startswith( "global" ):
+                    self.process_global_message( msgprefix, data )
+                elif msgprefix.startswith( "local" ):
+                    self.process_local_message( msgprefix, data )    
+                elif msgprefix.startswith( "notlocal" ):
+                    self.process_global_message( msgprefix, data ) 
+                return True
+        except nn.NanoMsgAPIError as e:
+            return False
+        except ValueError as ve:
+            logger.warn("Received invalid message: %s"%( msg ))
+            return False
+ 
+    def process_personal_message( self, prefix, data ):
+        pass
+
+    def process_global_message( self, prefix, data ):
+        pass
+
+    def process_local_message( self, prefix, data ):
+        pass
+
+
 if __name__ == "__main__":
 
     node = NodeDaemon()
     node.setup_bus()
 
     while( True ):
-        node.process_messages()
+        node.process_node_messages()
+        node.process_broker_messages()
         # Every now and then check core heartbeats and remove cores no longer active.
 

@@ -9,10 +9,11 @@ sys.path.insert(0, parent)
 
 import lib.remap_utils as remap_utils
 
-# A core daemon connects to the broker and to the node daemon.
+# A core daemon connects to the node daemon.
 # Core daemons manage the map/reduce processes doing the actual work.
+# The node daemon reroutes broker messages on behalf of the core.
 # 
-# The core alternates between reading from the node and from the broker.
+# The core alternates between work and reading messages from the node
 # The volume of messages isn't very high, it's mostly about planning and
 # orchestration of the services and relaying progress, status and health messages.
 # 
@@ -25,9 +26,8 @@ logger = logging.getLogger("CoreDaemon")
 
 class CoreDaemon( object ):
     def __init__(self):
-        self.coreid = "NONE"
-        self.sub = None
-        self.broker_address = "unknown" 
+        self.coreid = "NONE" 
+        self.node = None
 
     # The core daemon connects to the node first.
     def setup_node( self ):
@@ -37,23 +37,6 @@ class CoreDaemon( object ):
     def set_node_timeout( self, rcv_timeout ):
         # Apply a timeout for receiving messages from node.
         self.node.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )
-
-    def setup_broker( self ):
-        if self.sub != None:
-            self.sub.close()
-            self.sub = None
-
-        if self.broker_address == "unknown":
-            logger.error("Cannot setup broker yet. Address unknown.")
-            return
-
-        self.sub = nn.Socket( nn.SUB )
-        self.sub.connect( "tcp://%s:8687"%( self.broker_address ))
-        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "global")
-        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "local")
-        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.coreid)
-        self.sub.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, 0 )
-        logger.info("Broker setup complete")
 
     def process_node_messages( self ):
         try:
@@ -73,43 +56,6 @@ class CoreDaemon( object ):
         elif msgtype == "new_broker":
             self.broker_address = data["broker_address"]
             self.setup_broker()
-
-    def process_broker_messages( self ):
-        if self.sub == None:
-            # No broker is known yet. 
-            return False
-
-        try:
-            msg = self.sub.recv()
-            if msg != None and len(msg)>0:
-                msgprefix, data = remap_utils.unpack_msg( msg )
-
-                logger.info( "Just received %s:%s", msgprefix, data )
-
-                if msgprefix.startswith(self.coreid):
-                    # message unidirectionally sent to me.
-                    self.process_personal_message( msgprefix, data )
-                elif msgprefix.startswith( "global" ):
-                    self.process_global_message( msgprefix, data )
-                elif msgprefix.startswith( "local" ):
-                    self.process_local_message( msgprefix, data )    
-                elif msgprefix.startswith( "notlocal" ):
-                    self.process_global_message( msgprefix, data ) 
-                return True
-        except nn.NanoMsgAPIError as e:
-            return False
-        except ValueError as ve:
-            logger.warn("Received invalid message: %s"%( msg ))
-            return False
- 
-    def process_personal_message( self, prefix, data ):
-        pass
-
-    def process_global_message( self, prefix, data ):
-        pass
-
-    def process_local_message( self, prefix, data ):
-        pass
 
     def register( self ):
         # Let's start with getting some meaningful identification stuff from node.
@@ -162,13 +108,10 @@ if __name__ == "__main__":
         logger.error( "Could not register with node to get a core id and connect to broker." )
         sys.exit(-1)
 
-    core.setup_broker()
     core.set_node_timeout( 0 )
 
     while( True ):
-        while (core.process_broker_messages()):
-            pass
         while (core.process_node_messages()):
-            pass
+            pas
         core.do_more_work()
 
