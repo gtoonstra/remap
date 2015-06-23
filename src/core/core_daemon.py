@@ -9,6 +9,7 @@ parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent)
 
 import lib.remap_utils as remap_utils
+import lib.remap_constants as remap_constants
 from lib.remap_utils import RemapException
 
 # A core daemon connects to the node daemon.
@@ -27,8 +28,10 @@ logger = logging.getLogger("CoreDaemon")
 class CoreDaemon( object ):
     def __init__(self):
         self.pid = os.getpid()
-        self.coreid = "unknown" 
+        self.coreid = "unknown"
         self.node = None
+        self.appid = "unknown"
+        self.jobid = "unknown"
 
     # The core daemon connects to the node first.
     def setup_node( self ):
@@ -106,8 +109,12 @@ class CoreDaemon( object ):
         if msgtype == "_plzreg":
             self.register()
 
+    def send_status( self ):
+        self.node.send( remap_utils.pack_msg( "%s.status.%s"%(self.jobid, self.coreid), {"progress":0} ) )
+
     def do_more_work( self ):
-        pass
+        # 2 seconds of work
+        time.sleep( 2 )
 
 if __name__ == "__main__":
 
@@ -149,4 +156,6 @@ if __name__ == "__main__":
         except RemapException as re:
             logger.exception( re )
             # take other actions
+
+        core.send_status()
 

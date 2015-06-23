@@ -7,7 +7,7 @@ import time
 if __name__ == "__main__":
     # Local pub and sub
     lpub = nn.Socket( nn.PUB, domain=nn.AF_SP )
-    lpub.connect( "tcp://0.0.0.0:8686" )
+    lpub.connect( "tcp://localhost:8686" )
     lpub.send( "test" )
 
     while( True ):

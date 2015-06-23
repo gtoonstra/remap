@@ -6,11 +6,13 @@ import logging
 import time
 from bonjour_detect import BonjourResolver
 import sys
+from node_hardware import NodeHardware
 
 parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent)
 
 import lib.remap_utils as remap_utils
+import lib.remap_constants as remap_constants
 from lib.remap_utils import RemapException
 
 # A node daemon connects to the broker and exists to allow
@@ -37,6 +39,7 @@ class NodeDaemon( object ):
         self.sub = None
         self.pub = None
         self.tot_m_rcv = 0
+        self.hw = NodeHardware()
         self.nodeid = remap_utils.node_id()
         self.bonjour = BonjourResolver( "_remap._tcp", self.cb_broker_changed )
         self.bonjour.start()
@@ -99,6 +102,13 @@ class NodeDaemon( object ):
             if msgtype.startswith("_"):
                 # node message
                 self.process_core_message( msgtype, data )
+            elif msgtype == "status":
+                if senderid in self.cores:                
+                    coredata = self.cores[ senderid ]
+                    coredata["ts_last_seen"] = time.time()
+                    coredata["progress"] = data["progress"]
+                    logger.info("Core %s progressed %d"%( senderid, coredata["progress"] ))
+                    self.forward_to_broker( msg )
             else:
                 # forward to broker instead
                 self.forward_to_broker( msg )             
@@ -123,10 +133,11 @@ class NodeDaemon( object ):
         msgid = remap_utils.safe_get(data, "msgid")
         pid = remap_utils.safe_get(data, "pid")
         coreid = remap_utils.core_id( self.nodeid, pid )
-        self.cores[ coreid ] = {"coreid":coreid,"ts_last_seen":time.time()}
+        self.cores[ coreid ] = {"coreid":coreid,"ts_last_seen":time.time(),"progress":-1,"pid":pid}
         msg = remap_utils.pack_msg( "%s._hey.%s"%(coreid, self.nodeid), {"result":"OK","msgid":msgid,"coreid":coreid} )
         if self.sub != None:
             self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, coreid)
+        logger.info( "A new core registered %s"%( coreid ))
         self.bus.send( msg )
 
     def process_broker_messages( self ):
@@ -147,19 +158,55 @@ class NodeDaemon( object ):
             self.tot_m_rcv = self.tot_m_rcv + 1
             if msg != None and len(msg)>0:
                 msgprefix, data = remap_utils.unpack_msg( msg )
-                self.bus.send(msg)
+                logger.info("Received %s"%(msgprefix))
+                recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
+                if msgtype == "showhands":
+                    self.handle_showhands( recipientid, senderid, data )
+                elif msgtype == "start":
+                    pass
+                else:
+                    # Forward to all cores for their processing.
+                    self.bus.send(msg)
                 return True
             else:
                 return False
         except nn.NanoMsgAPIError as e:
             return False
 
+    def purge_inactive_cores( self, new_ts ):
+        kill_list = []
+        for key, coredata in self.cores.items():
+            last_ts = coredata["ts_last_seen"]
+            if (new_ts - last_ts) > remap_constants.THR_STATUS_DELAY:
+                logger.info("Core %s missed a status report."%( key ))
+            if (new_ts - last_ts) > remap_constants.MAX_STATUS_DELAY:
+                logger.info("Core %s is considered dead."%( key ))
+                kill_list.append( key )
+
+        for key in kill_list:                
+            del self.cores[ key ]
+
+    # Request re-registration of existing core processes currently on the bus
+    # allows failover restart of this node daemon.
     def req_registration( self ):
         msg = remap_utils.pack_msg( "node._plzreg.%s"%(self.nodeid), {} )
         self.bus.send( msg )
 
+    # Some app initiator requests processing capacity
+    def handle_showhands( self, recipientid, senderid, data ):
+        num_cpus = self.hw.available_cpus()-1
+        cores_active = len(self.cores)
+        avail_cpus = num_cpus - cores_active
+        logger.info( "Available cpu's: %d"%( avail_cpus ) )
+        if avail_cpus > 0:
+            logger.info( "Volunteering with %d cores"%( avail_cpus ))
+            msg = remap_utils.pack_msg( "%s.raisehand.%s"%( senderid, self.nodeid ), {"cores":avail_cpus} ) 
+            self.forward_to_broker( self, msg )
+
 if __name__ == "__main__":
     logger.info("Starting node daemon")
+    health_check = time.time()
+
     node = NodeDaemon()
     node.setup_bus()
     node.apply_timeouts()
@@ -185,4 +232,8 @@ if __name__ == "__main__":
             logger.exception( re )
 
         # Every now and then check core heartbeats and remove cores no longer active.
+        new_ts = time.time()
+        if (new_ts - health_check) > remap_constants.HEALTH_CHECK_DELAY:
+            health_check = new_ts            
+            node.purge_inactive_cores( new_ts )
 
