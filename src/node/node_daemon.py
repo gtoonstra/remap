@@ -4,7 +4,7 @@ import nanomsg as nn
 from nanomsg import wrapper as nn_wrapper
 import logging
 import time
-
+from bonjour_detect import BonjourResolver
 import sys
 
 parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -30,8 +30,11 @@ logger = logging.getLogger("NodeDaemon")
 class NodeDaemon( object ):
     def __init__(self):
         self.cores = {}
-        self.broker_address = "localhost"
+        self.broker_address = "unknown"
+        self.brokerChanged = False
         self.sub = None
+        self.bonjour = BonjourResolver( "_remap._tcp", self.cb_broker_changed )
+        self.bonjour.start()
 
     # Create a bi-directional communication channel, where the node daemon 
     # 'shouts' in the room even to contact a single core, but the core only
@@ -51,7 +54,13 @@ class NodeDaemon( object ):
             rcv_timeout = 0
             self.bus.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )     
 
+    def cb_broker_changed( self, broker_address ):
+        logger.info("Received new broker address: %s"%(broker_address) )
+        self.broker_address = broker_address
+        self.brokerChanged = True
+
     def setup_broker( self ):
+        self.brokerChanged = False
         if self.sub != None:
             self.sub.close()
             self.sub = None
@@ -59,7 +68,7 @@ class NodeDaemon( object ):
         self.apply_timeouts()
 
         if self.broker_address == "unknown":
-            logger.error("Cannot setup broker yet. Address unknown.")
+            logger.error("Deferring broker setup as address is still unknown.")
             return
 
         self.sub = nn.Socket( nn.SUB )
@@ -79,6 +88,7 @@ class NodeDaemon( object ):
                 return self.process_hello( data )
         except nn.NanoMsgAPIError as e:
             pass
+        return False
 
     def process_hello( self, data ):
         msgid = data[ "msgid" ]
@@ -86,12 +96,19 @@ class NodeDaemon( object ):
         self.cores[ coreid ] = {"coreid":coreid,"ts_last_seen":time.time()}
         msg = remap_utils.pack_msg( "hey", {"result":"OK","msgid":msgid,"coreid":coreid,"broker_address":self.broker_address} )
         self.bus.send( msg )
-        return
+        return True
 
     def process_broker_messages( self ):
         if self.sub == None:
             # No broker is known yet.
-            return False
+            if self.brokerChanged:
+                logger.info("The broker configuration changed.") 
+                self.setup_broker()
+                if self.sub == None:
+                    logger.info("Failed broker setup.")
+                    return False
+            else:              
+                return False
 
         try:
             msg = self.sub.recv()
@@ -115,6 +132,7 @@ class NodeDaemon( object ):
         except ValueError as ve:
             logger.warn("Received invalid message: %s"%( msg ))
             return False
+        return False
  
     def process_personal_message( self, prefix, data ):
         pass
@@ -125,17 +143,21 @@ class NodeDaemon( object ):
     def process_local_message( self, prefix, data ):
         pass
 
-
 if __name__ == "__main__":
-
+    logger.info("Starting node daemon")
     node = NodeDaemon()
     node.setup_bus()
-    node.setup_broker()
+    node.apply_timeouts()
+
+    logger.info("Node daemon started")
 
     while( True ):
         while (node.process_node_messages()):
             pass
         while (node.process_broker_messages()):
             pass
+        if node.brokerChanged:
+            node.setup_broker()
+
         # Every now and then check core heartbeats and remove cores no longer active.
 
