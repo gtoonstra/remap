@@ -23,7 +23,6 @@ logging.basicConfig( level=logging.INFO )
 # logger = logging.getLogger(__name__)
 logger = logging.getLogger("CoreDaemon")
 
-
 class CoreDaemon( object ):
     def __init__(self):
         self.coreid = "NONE" 
@@ -42,20 +41,13 @@ class CoreDaemon( object ):
         try:
             msg = self.node.recv()
             logger.info( "Received message from node: %s"%( msg ))
-            self.process( msg )
-            return True
+            msgtype, data = remap_utils.unpack_msg( msg )
+            if msgtype == self.coreid:
+                # This is directed at this core specifically, so it's more of a req/rep type
+                return self.process_request( data )
+            return False
         except nn.NanoMsgAPIError as e:
             return False
-
-    def process( self, msg ):
-        # It's always msgtype plus bunch of data, separated by space. 
-        msgtype, data = remap_utils.unpack_msg( msg )
-        if msgtype == self.coreid:
-            # This is directed at this core specifically, so it's more of a req/rep type
-            return self.process_request( data )
-        elif msgtype == "new_broker":
-            self.broker_address = data["broker_address"]
-            self.setup_broker()
 
     def register( self ):
         # Let's start with getting some meaningful identification stuff from node.

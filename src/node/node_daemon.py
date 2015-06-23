@@ -41,14 +41,22 @@ class NodeDaemon( object ):
         self.bus = nn.Socket( nn.BUS )
         self.bus.bind("ipc:///tmp/node_daemon.ipc")
 
-        # Apply a timeout for the loop.
-        rcv_timeout = 100
-        self.bus.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )
+    def apply_timeouts( self ):
+        if self.sub == None:
+            rcv_timeout = 100
+            self.bus.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )     
+        else:
+            rcv_timeout = 100
+            self.sub.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )
+            rcv_timeout = 0
+            self.bus.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )     
 
     def setup_broker( self ):
         if self.sub != None:
             self.sub.close()
             self.sub = None
+
+        self.apply_timeouts()
 
         if self.broker_address == "unknown":
             logger.error("Cannot setup broker yet. Address unknown.")
@@ -58,8 +66,9 @@ class NodeDaemon( object ):
         self.sub.connect( "tcp://%s:8687"%( self.broker_address ))
         self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "global")
         self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "local")
-        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.coreid)
-        self.sub.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, 0 )
+        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "notlocal")
+        # self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.coreid)
+        self.apply_timeouts()
         logger.info("Broker setup complete")
 
     def process_node_messages( self ):
@@ -81,7 +90,7 @@ class NodeDaemon( object ):
 
     def process_broker_messages( self ):
         if self.sub == None:
-            # No broker is known yet. 
+            # No broker is known yet.
             return False
 
         try:
@@ -121,9 +130,12 @@ if __name__ == "__main__":
 
     node = NodeDaemon()
     node.setup_bus()
+    node.setup_broker()
 
     while( True ):
-        node.process_node_messages()
-        node.process_broker_messages()
+        while (node.process_node_messages()):
+            pass
+        while (node.process_broker_messages()):
+            pass
         # Every now and then check core heartbeats and remove cores no longer active.
 
