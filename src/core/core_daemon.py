@@ -32,6 +32,7 @@ class CoreDaemon( object ):
         self.node = None
         self.appid = "unknown"
         self.jobid = "unknown"
+        self.priority = 0
 
     # The core daemon connects to the node first.
     def setup_node( self ):
@@ -72,7 +73,7 @@ class CoreDaemon( object ):
         msgid = remap_utils.unique_id()
 
         logger.info( "Registering with node" )
-        self.node.send( remap_utils.pack_msg( "node._hello.%d"%(self.pid), {"msgid":msgid,"pid":self.pid} ) )
+        self.node.send( remap_utils.pack_msg( "node._hello.%d"%(self.pid), {"msgid":msgid,"pid":self.pid,"priority":self.priority} ) )
 
         # The while loop will terminate as soon as node stops sending messages,
         # so this should be safe to do.

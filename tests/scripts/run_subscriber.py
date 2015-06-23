@@ -9,6 +9,7 @@ if __name__ == "__main__":
     lsub = nn.Socket( nn.SUB, domain=nn.AF_SP )
     lsub.connect( "tcp://localhost:8687" )
     lsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "")
-    data = lsub.recv()
-    print(data)
+    while(True):
+        data = lsub.recv()
+        print(data)
 

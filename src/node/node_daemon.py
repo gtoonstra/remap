@@ -123,6 +123,7 @@ class NodeDaemon( object ):
     def forward_to_broker( self, msg ):
         if self.pub != None:
             try:
+                logger.info("Sending %s to broker"%(msg))
                 self.pub.send( msg )
             except nn.NanoMsgAPIError as e:
                 pass
@@ -132,12 +133,13 @@ class NodeDaemon( object ):
     def process_hello( self, data ):
         msgid = remap_utils.safe_get(data, "msgid")
         pid = remap_utils.safe_get(data, "pid")
+        priority = remap_utils.safe_get( data, "priority" )
         coreid = remap_utils.core_id( self.nodeid, pid )
-        self.cores[ coreid ] = {"coreid":coreid,"ts_last_seen":time.time(),"progress":-1,"pid":pid}
+        self.cores[ coreid ] = {"coreid":coreid,"ts_last_seen":time.time(),"progress":-1,"pid":pid,"priority":priority}
         msg = remap_utils.pack_msg( "%s._hey.%s"%(coreid, self.nodeid), {"result":"OK","msgid":msgid,"coreid":coreid} )
         if self.sub != None:
             self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, coreid)
-        logger.info( "A new core registered %s"%( coreid ))
+        logger.info( "A core registered %s"%( coreid ))
         self.bus.send( msg )
 
     def process_broker_messages( self ):
@@ -194,14 +196,12 @@ class NodeDaemon( object ):
 
     # Some app initiator requests processing capacity
     def handle_showhands( self, recipientid, senderid, data ):
-        num_cpus = self.hw.available_cpus()-1
-        cores_active = len(self.cores)
-        avail_cpus = num_cpus - cores_active
+        avail_cpus = self.hw.available_cpus( remap_utils.safe_get( data, "priority" ), self.cores )
         logger.info( "Available cpu's: %d"%( avail_cpus ) )
         if avail_cpus > 0:
             logger.info( "Volunteering with %d cores"%( avail_cpus ))
             msg = remap_utils.pack_msg( "%s.raisehand.%s"%( senderid, self.nodeid ), {"cores":avail_cpus} ) 
-            self.forward_to_broker( self, msg )
+            self.forward_to_broker( msg )
 
 if __name__ == "__main__":
     logger.info("Starting node daemon")
