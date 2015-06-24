@@ -101,6 +101,12 @@ class CoreDaemon( object ):
                 if replymsgid == msgid:
                     # this is us
                     self.coreid = remap_utils.safe_get(data, "coreid" )
+                    self.sub.set_string_option( nn.SUB, nn.SUB_UNSUBSCRIBE, "" )
+                    self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "global" )
+                    self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "local" )
+                    self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "notlocal" )
+                    self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.coreid )
+
                     logger.info( "Received coreid %s."%( self.coreid ))
                     return True
             except nn.NanoMsgAPIError as e:
@@ -236,6 +242,7 @@ class CoreDaemon( object ):
             self.completedparts = self.completedparts + 1
             self.progress = (self.completedparts * self.fraction)
             self.input.close()
+            self.partprogress = 0
             self.input = None
 
         self.send_status()
