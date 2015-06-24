@@ -84,8 +84,7 @@ class NodeDaemon( object ):
         self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "global")
         self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "local")
         self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "notlocal")
-        for coreid in self.cores:
-            self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, coreid)
+        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.nodeid)
         self.apply_timeouts()
 
         self.pub = nn.Socket( nn.PUB )
@@ -164,8 +163,9 @@ class NodeDaemon( object ):
                 recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
                 if msgtype == "showhands":
                     self.handle_showhands( recipientid, senderid, data )
-                elif msgtype == "start":
-                    pass
+                elif msgtype == "jobstart":
+                    #if recipientid == self.nodeid:
+                    self.handle_jobstart( recipientid, senderid, data )
                 else:
                     # Forward to all cores for their processing.
                     self.bus.send(msg)
@@ -196,11 +196,24 @@ class NodeDaemon( object ):
 
     # Some app initiator requests processing capacity
     def handle_showhands( self, recipientid, senderid, data ):
-        avail_cpus = self.hw.available_cpus( remap_utils.safe_get( data, "priority" ), self.cores )
-        logger.info( "Available cpu's: %d"%( avail_cpus ) )
-        if avail_cpus > 0:
-            logger.info( "Volunteering with %d cores"%( avail_cpus ))
-            msg = remap_utils.pack_msg( "%s.raisehand.%s"%( senderid, self.nodeid ), {"cores":avail_cpus} ) 
+        avail, interruptable = self.hw.available_cpus( remap_utils.safe_get( data, "priority" ), self.cores )
+        logger.info( "Evaluating app request: %s"%( senderid ) )
+        if avail > 0 or interruptable > 0:
+            logger.info( "Volunteering with %d cores, %d interruptable"%( avail, interruptable ))
+            msg = remap_utils.pack_msg( "%s.raisehand.%s"%( senderid, self.nodeid ), {"cores":avail,"interruptable":interruptable} ) 
+            self.forward_to_broker( msg )
+
+    # Some app initiator wants this node to start work
+    def handle_jobstart( self, recipientid, senderid, data ):
+        avail, interruptable = self.hw.available_cpus( remap_utils.safe_get( data, "priority" ), self.cores )
+        numcores = len(remap_utils.safe_get( data, "cores" ))
+        if (avail + interruptable) >= numcores:
+            logger.info("Starting job with %d cores"%( numcores ))
+            self.hw.start_job( senderid, numcores, data )
+        else:
+            # Something changed in the meantime. Reject
+            logger.info( "Initiator requested %d cores, %d can be committed. Rejecting"%( numcores, avail + interruptable ))
+            msg = remap_utils.pack_msg( "%s.rejectjob.%s"%( senderid, self.nodeid ), {} ) 
             self.forward_to_broker( msg )
 
 if __name__ == "__main__":
