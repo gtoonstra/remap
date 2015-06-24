@@ -20,4 +20,9 @@ just works.
 
 Now your machine is ready to run the code.
 
+Find a directory where you want to create your remap directory in, then:
+
+    > git clone https://github.com/gtoonstra/remap.git
+    > cd remap
+    > ls
 
