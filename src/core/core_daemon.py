@@ -33,6 +33,8 @@ class CoreDaemon( object ):
         self.appid = "unknown"
         self.jobid = "unknown"
         self.priority = 0
+        self.work = None
+        self.workRequested = False
 
     # The core daemon connects to the node first.
     def setup_node( self ):
@@ -98,7 +100,10 @@ class CoreDaemon( object ):
         return False
 
     def process_personal_message( self, msgtype, sender, data ):
-        pass
+        if msgtype == "_work":
+            # data contains work
+            # start that work
+            pass
 
     def process_global_message( self, msgtype, sender, data ):
         pass
@@ -111,11 +116,20 @@ class CoreDaemon( object ):
             self.register()
 
     def send_status( self ):
-        self.node.send( remap_utils.pack_msg( "%s.status.%s"%(self.jobid, self.coreid), {"progress":0} ) )
+        if self.work != None:
+            self.node.send( remap_utils.pack_msg( "%s.status.%s"%(self.jobid, self.coreid), {"progress":0} ) )
 
     def do_more_work( self ):
-        # 2 seconds of work
-        time.sleep( 2 )
+        if self.work != None:
+            # so, do some work
+            pass
+        else:
+            if self.workRequested:
+                time.sleep(0.1)
+                return
+            logger.info( "Grabbing work item from node" )
+            self.workRequested = True
+            self.node.send( remap_utils.pack_msg( "node._todo.%d"%(self.coreid), {} ) )
 
 if __name__ == "__main__":
 
