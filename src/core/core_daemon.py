@@ -30,7 +30,8 @@ class CoreDaemon( object ):
     def __init__(self):
         self.pid = os.getpid()
         self.coreid = "unknown"
-        self.node = None
+        self.sub = None
+        self.pub = None
         self.appid = "unknown"
         self.jobid = "unknown"
         self.priority = 0
@@ -44,16 +45,19 @@ class CoreDaemon( object ):
 
     # The core daemon connects to the node first.
     def setup_node( self ):
-        self.node = nn.Socket( nn.BUS )
-        self.node.connect("ipc:///tmp/node_daemon.ipc")
+        self.sub = nn.Socket( nn.SUB )
+        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "" )
+        self.sub.connect("ipc:///tmp/node_sub.ipc")
+        self.pub = nn.Socket( nn.PUB )
+        self.pub.connect("ipc:///tmp/node_pub.ipc")
 
     def set_node_timeout( self, rcv_timeout ):
         # Apply a timeout for receiving messages from node.
-        self.node.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )
+        self.sub.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )
 
     def process_node_messages( self ):
         try:
-            msg = self.node.recv()
+            msg = self.sub.recv()
             logger.info( "Received message from node: %s"%( msg ))
             msgprefix, data = remap_utils.unpack_msg( msg )
             recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
@@ -81,13 +85,13 @@ class CoreDaemon( object ):
         msgid = remap_utils.unique_id()
 
         logger.info( "Registering with node" )
-        self.node.send( remap_utils.pack_msg( "node._hello.%d"%(self.pid), {"msgid":msgid,"pid":self.pid,"priority":self.priority} ) )
+        self.pub.send( remap_utils.pack_msg( "node._hello.%d"%(self.pid), {"msgid":msgid,"pid":self.pid,"priority":self.priority} ) )
 
         # The while loop will terminate as soon as node stops sending messages,
         # so this should be safe to do.
         while True:
             try:
-                msg = self.node.recv()
+                msg = self.sub.recv()
                 msgprefix, data = remap_utils.unpack_msg( msg )
                 recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
                 if msgtype != "_hey":
@@ -153,7 +157,7 @@ class CoreDaemon( object ):
 
     def send_status( self ):
         if self.work != None:
-            self.node.send( remap_utils.pack_msg( "%s.status.%s"%(self.jobid, self.coreid), {"progress":self.progress} ) )
+            self.pub.send( remap_utils.pack_msg( "%s.status.%s"%(self.jobid, self.coreid), {"progress":self.progress} ) )
 
     def do_more_work( self ):
         # Check if we have some work to do already
@@ -177,12 +181,12 @@ class CoreDaemon( object ):
 
             logger.info( "Grabbing work item from node" )
             self.ts_workRequested = time.time()
-            self.node.send( remap_utils.pack_msg( "node._todo.%s"%(self.coreid), {} ) )
+            self.pub.send( remap_utils.pack_msg( "node._todo.%s"%(self.coreid), {} ) )
 
     # The work to be done as a mapper
     def mapper_work( self ):
         if self.input.isComplete():
-            self.node.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"inputfile":self.work["inputfile"]} ) )
+            self.pub.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"inputfile":self.work["inputfile"]} ) )
             # allow time for message to be sent
             time.sleep( 0.5 )
             self.keepWorking = False
@@ -211,7 +215,7 @@ class CoreDaemon( object ):
     def reducer_work( self ):
         if self.input == None:
             if len(self.reducerfiles) == 0:
-                self.node.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"partition":self.work["partition"]} ) )
+                self.pub.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"partition":self.work["partition"]} ) )
                 # allow time for message to be sent
                 time.sleep( 0.5 )
                 self.keepWorking = False
@@ -237,7 +241,8 @@ class CoreDaemon( object ):
         self.send_status()
 
     def shutdown( self ):
-        self.node.close()
+        self.sub.close()
+        self.pub.close()
 
 if __name__ == "__main__":
 

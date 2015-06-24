@@ -36,7 +36,7 @@ class NodeDaemon( object ):
         self.cores = {}
         self.broker_address = "unknown"
         self.brokerChanged = False
-        self.sub = None
+        self.bsub = None
         self.pub = None
         self.tot_m_rcv = 0
         self.hw = NodeHardware()
@@ -49,18 +49,21 @@ class NodeDaemon( object ):
     # sends written messages back to the shouter with the megaphone.
     # (embarassing protocol).
     def setup_bus( self ):
-        self.bus = nn.Socket( nn.BUS )
-        self.bus.bind("ipc:///tmp/node_daemon.ipc")
+        self.lsub = nn.Socket( nn.SUB )
+        self.lsub.bind("ipc:///tmp/node_pub.ipc")
+        self.lsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "" )
+        self.lpub = nn.Socket( nn.PUB )
+        self.lpub.bind("ipc:///tmp/node_sub.ipc")
 
     def apply_timeouts( self ):
-        if self.sub == None:
+        if self.bsub == None:
             rcv_timeout = 100
-            self.bus.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )     
+            self.lsub.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )     
         else:
             rcv_timeout = 100
-            self.sub.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )
+            self.bsub.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )
             rcv_timeout = 0
-            self.bus.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )     
+            self.lsub.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )     
 
     def cb_broker_changed( self, broker_address ):
         logger.info("Received new broker address: %s"%(broker_address) )
@@ -69,9 +72,9 @@ class NodeDaemon( object ):
 
     def setup_broker( self ):
         self.brokerChanged = False
-        if self.sub != None:
-            self.sub.close()
-            self.sub = None
+        if self.bsub != None:
+            self.bsub.close()
+            self.bsub = None
 
         self.apply_timeouts()
 
@@ -79,12 +82,12 @@ class NodeDaemon( object ):
             logger.error("Deferring broker setup as address is still unknown.")
             return
 
-        self.sub = nn.Socket( nn.SUB )
-        self.sub.connect( "tcp://%s:8687"%( self.broker_address ))
-        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "global")
-        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "local")
-        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "notlocal")
-        self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.nodeid)
+        self.bsub = nn.Socket( nn.SUB )
+        self.bsub.connect( "tcp://%s:8687"%( self.broker_address ))
+        self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "global")
+        self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "local")
+        self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "notlocal")
+        self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.nodeid)
         self.apply_timeouts()
 
         self.pub = nn.Socket( nn.PUB )
@@ -94,7 +97,7 @@ class NodeDaemon( object ):
 
     def process_bus_messages( self ):
         try:
-            msg = self.bus.recv()
+            msg = self.lsub.recv()
             msgprefix, data = remap_utils.unpack_msg( msg )
             recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
 
@@ -144,7 +147,7 @@ class NodeDaemon( object ):
         self.cores[ coreid ] = {"coreid":coreid,"ts_last_seen":time.time(),"progress":-1,"pid":pid,"priority":priority}
         msg = remap_utils.pack_msg( "%s._hey.%s"%(coreid, self.nodeid), {"msgid":msgid,"coreid":coreid} )
         logger.info( "A core registered %s"%( coreid ))
-        self.bus.send( msg )
+        self.lpub.send( msg )
 
     def process_todo( self, senderid, data ):
         coredata = self.cores[ senderid ]
@@ -152,15 +155,15 @@ class NodeDaemon( object ):
         if work != None:
             msg = remap_utils.pack_msg( "%s._work.%s"%(senderid, self.nodeid), work )
             logger.info( "A core was given some work to do: %s"%( senderid ))
-            self.bus.send( msg )
+            self.lpub.send( msg )
 
     def process_broker_messages( self ):
-        if self.sub == None:
+        if self.bsub == None:
             # No broker is known yet.
             if self.brokerChanged:
                 logger.info("The broker configuration changed.")
                 self.setup_broker()
-                if self.sub == None:
+                if self.bsub == None:
                     logger.info("Failed broker setup.")
                     return False
             else:              
@@ -168,7 +171,7 @@ class NodeDaemon( object ):
 
         try:
             # Grab next msg from broker if any
-            msg = self.sub.recv()
+            msg = self.bsub.recv()
             self.tot_m_rcv = self.tot_m_rcv + 1
             if msg != None and len(msg)>0:
                 msgprefix, data = remap_utils.unpack_msg( msg )
@@ -181,7 +184,7 @@ class NodeDaemon( object ):
                     self.handle_jobstart( recipientid, senderid, data )
                 else:
                     # Forward to all cores for their processing.
-                    self.bus.send(msg)
+                    self.lpub.send(msg)
                 return True
             else:
                 return False
@@ -205,7 +208,7 @@ class NodeDaemon( object ):
     # allows failover restart of this node daemon.
     def req_registration( self ):
         msg = remap_utils.pack_msg( "node._plzreg.%s"%(self.nodeid), {} )
-        self.bus.send( msg )
+        self.lpub.send( msg )
 
     # Some app initiator requests processing capacity
     def handle_showhands( self, recipientid, senderid, data ):
