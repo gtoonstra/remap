@@ -107,9 +107,12 @@ class CoreDaemon( object ):
 
     def process_personal_message( self, msgtype, sender, data ):
         if msgtype == "_work":
-            # INFO:CoreDaemon:Received message from node: b'88750194067218_4516._work.88750194067218 {"inputfile": "/remote/data/tomsawyer.txt", "type": "mapper", "appconfig": "/remote/app/wordcount/appconfig.json", "outputdir": "/remote/im/jobid", "appmodule": "wordcount"}'
-            # data contains work
-            # start that work
+            # b'88750194067218_4516._work.88750194067218 {"inputfile": "/remote/data/tomsawyer.txt", "type": "mapper", "appconfig": "/remote/app/wordcount/appconfig.json", 
+            # "outputdir": "/remote/im/jobid", "appmodule": "wordcount"}'
+            #
+            # Data is the work to be executed
+            # Prepare to start that work
+            #
             self.work = data
             self.jobid = self.work["jobid"]
             self.workertype = self.work["type"]
