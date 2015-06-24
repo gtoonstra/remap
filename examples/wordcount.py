@@ -7,11 +7,11 @@ def create_mapper_reader( filename ):
 def create_mapper_partitioner( outputdir, partition, mapperid ):
     return remap.TextPartitioner( outputdir, partition, mapperid )
 
-def create_reducer_reader( filename ):
-    return remap.TextPartFileReader( filename )
+def create_reducer_reader( inputdir ):
+    return remap.TextPartFileReader( inputdir )
 
-def create_reducer_writer( filename ):
-    return remap.TextReducerWriter( filename )
+def create_reducer_writer( outputdir, partition ):
+    return remap.TextReduceWriter( outputdir, partition )
 
 # ---- map and reduce implementations ----
 # map creates a <word>,1 combination and also 

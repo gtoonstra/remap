@@ -6,6 +6,10 @@ class BaseReader(object):
     def __init__(self,filename):
         self.filename = filename
         self.filesize = os.stat(filename).st_size 
+        self.complete = False
+
+    def isComplete( self ):
+        return self.complete
 
 # A class for reading in raw data to be processed.
 # Used as input to the mapper
@@ -14,16 +18,12 @@ class TextFileReader(BaseReader):
         BaseReader.__init__(self,filename)
         self.f = open(self.filename, 'r')
         self.pos = 0
-        self.complete = False
 
     def read( self ):
         for line in self.f:
             self.pos = self.pos + len(line)
             yield self.filename, line
         self.complete = True
-
-    def isComplete( self ):
-        return self.complete
 
     def progress( self ):
         return float( float(self.pos) / self.filesize ) * 100
@@ -81,12 +81,24 @@ class TextPartFileReader(BaseReader):
     def __init__( self, filename ):
         BaseReader.__init__(self,filename)
         self.f = open(filename, 'r')
+        self.pos = 0
 
     def read( self ):
         for line in self.f:
+            self.pos = self.pos + len(line)
             key, data = line.split(',', 1)
             l = json.loads( data )
             yield (key, l)
+        self.complete = True
+
+    def isComplete( self ):
+        return self.complete
+
+    def progress( self ):
+        return float( float(self.pos) / self.filesize )
+
+    def close( self ):
+        self.f.close()
 
 # The reduce writer writes out the final result
 class BaseReduceWriter( object ):
@@ -96,7 +108,8 @@ class BaseReduceWriter( object ):
 
 class TextReduceWriter( BaseReduceWriter ):
     def __init__( self, partdir, partition ):
-        BaseReduceWriter.__init__( partdir, partition )
+        BaseReduceWriter.__init__( self, partdir, partition )
+        self.filename = os.path.join( self.partdir, "reduce_%s"%( partition ))
         self.f = open(self.filename, 'w')
 
     def store( self, k3, v3  ):
