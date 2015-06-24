@@ -1,6 +1,6 @@
 import remap
 
-# --- file i/o objects ----
+# --- create file i/o objects to be used ----
 def create_mapper_reader( filename ):
     return remap.TextFileReader( filename )
 
@@ -14,9 +14,9 @@ def create_reducer_writer( outputdir, partition ):
     return remap.TextReduceWriter( outputdir, partition )
 
 # ---- map and reduce implementations ----
-# map creates a <word>,1 combination and also 
-# allocates them to specific partitions, depending on the number
-# of reducers
+
+# map just creates one record of the word and a '1' to count it,
+# it also directs the mapped value to a specific partition
 def map( key, value ):
     remove = ".,?:;!\""
     trans = str.maketrans(remove, ' ' * len(remove))
@@ -36,6 +36,7 @@ def map( key, value ):
         else:
             yield '_default', word, 1
 
+# The reduce operation sums all the values in the sequence and outputs.
 def reduce( key, list_of_values ):
     yield (key, sum(list_of_values))
 

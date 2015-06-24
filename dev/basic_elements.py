@@ -44,7 +44,7 @@ class Partitioner( object ):
         self.mem[ k2 ].append( v2 )
         self.total_values = self.total_values + 1
 
-    def sort_and_flush( self ):
+    def sort_flush_close( self ):
         for k in sorted(self.mem):
             l = self.mem[k]
             out = json.dumps( l )
@@ -129,7 +129,7 @@ if __name__ == '__main__':
 
     # Sort partition before output and flush sorted output to file.
     for part in partitions:
-        partitions[part].sort_and_flush()
+        partitions[part].sort_flush_close()
 
     # ---- what a reducer does ----
 

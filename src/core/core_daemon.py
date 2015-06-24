@@ -153,59 +153,15 @@ class CoreDaemon( object ):
             self.node.send( remap_utils.pack_msg( "%s.status.%s"%(self.jobid, self.coreid), {"progress":self.progress} ) )
 
     def do_more_work( self ):
+        # Check if we have some work to do already
         if self.work != None:
             if self.workertype == "mapper":
-                if self.input.isComplete():
-                    self.node.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"inputfile":self.work["inputfile"]} ) )
-                    # allow time for message to be sent
-                    time.sleep( 0.5 )
-                    self.keepWorking = False
-                    return
-
-                # so, do some work
-                for k1, v1 in self.input.read():
-                    for part, k2, v2 in self.app.map( k1, v1 ):
-                        if part not in self.partitions:
-                            self.partitions[ part ] = self.app.create_mapper_partitioner( self.outputdir, part, self.coreid )
-                        self.partitions[ part ].store( k2, v2 )
-
-                    p = self.input.progress()
-                    if p > self.progress+1:
-                        self.progress = int(p)
-                        break
-
-                if self.input.isComplete():
-                    self.progress = 100
-                    self.input.close()
-                    for part in self.partitions:
-                        self.partitions[part].sort_flush_close()
-                self.send_status()
+                self.mapper_work()
             else:
-                if self.input == None:
-                    if len(self.reducerfiles) == 0:
-                        self.node.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"partition":self.work["partition"]} ) )
-                        # allow time for message to be sent
-                        time.sleep( 0.5 )
-                        self.keepWorking = False
-                        return
-                    self.input = self.app.create_reducer_reader( os.path.join( self.inputdir, self.reducerfiles.pop(0) ))
-
-                for key,list_of_values in self.input.read():
-                    for k3,v3 in self.app.reduce( key, list_of_values ):
-                        self.reducerWriter.store( k3, v3 )
-
-                    p = self.input.progress()
-                    if p > self.partprogress + 0.01:
-                        self.partprogress = p
-                        self.progress = self.partprogress * self.fraction + (self.completedparts * self.fraction)
-                        break
-
-                if self.input.isComplete():
-                    self.input.close()
-                    self.input = None
-
-                self.send_status()
+                self.reducer_work()
         else:
+            # No work yet, so let's request some and otherwise wait 5 seconds until
+            # we go away.
             if self.ts_workRequested > 0:
                 if (time.time() - self.ts_workRequested) < 5:
                     # prevent loop with 100% cpu utilization
@@ -219,6 +175,61 @@ class CoreDaemon( object ):
             logger.info( "Grabbing work item from node" )
             self.ts_workRequested = time.time()
             self.node.send( remap_utils.pack_msg( "node._todo.%s"%(self.coreid), {} ) )
+
+    # The work to be done as a mapper
+    def mapper_work( self ):
+        if self.input.isComplete():
+            self.node.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"inputfile":self.work["inputfile"]} ) )
+            # allow time for message to be sent
+            time.sleep( 0.5 )
+            self.keepWorking = False
+            return
+
+        # so, do some work
+        for k1, v1 in self.input.read():
+            for part, k2, v2 in self.app.map( k1, v1 ):
+                if part not in self.partitions:
+                    self.partitions[ part ] = self.app.create_mapper_partitioner( self.outputdir, part, self.coreid )
+                self.partitions[ part ].store( k2, v2 )
+
+            p = self.input.progress()
+            if p > self.progress+1:
+                self.progress = int(p)
+                break
+
+        if self.input.isComplete():
+            self.progress = 100
+            self.input.close()
+            for part in self.partitions:
+                self.partitions[part].sort_flush_close()
+        self.send_status()
+
+    # The work to be done as a reducer
+    def reducer_work( self ):
+        if self.input == None:
+            if len(self.reducerfiles) == 0:
+                self.node.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"partition":self.work["partition"]} ) )
+                # allow time for message to be sent
+                time.sleep( 0.5 )
+                self.keepWorking = False
+                return
+            self.input = self.app.create_reducer_reader( os.path.join( self.inputdir, self.reducerfiles.pop(0) ))
+
+        for key,list_of_values in self.input.read():
+            for k3,v3 in self.app.reduce( key, list_of_values ):
+                self.reducerWriter.store( k3, v3 )
+
+            p = self.input.progress()
+            if p > self.partprogress + 0.01:
+                self.partprogress = p
+                self.progress = self.partprogress * self.fraction + (self.completedparts * self.fraction)
+                break
+
+        if self.input.isComplete():
+            self.input.close()
+            self.input = None
+
+        self.send_status()
 
     def shutdown( self ):
         self.node.close()
