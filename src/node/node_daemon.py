@@ -100,7 +100,7 @@ class NodeDaemon( object ):
 
             if msgtype.startswith("_"):
                 # node message
-                self.process_core_message( msgtype, data )
+                self.process_core_message( msgtype, senderid, data )
             elif msgtype == "status":
                 if senderid in self.cores:                
                     coredata = self.cores[ senderid ]
@@ -108,6 +108,12 @@ class NodeDaemon( object ):
                     coredata["progress"] = data["progress"]
                     logger.info("Core %s progressed %d"%( senderid, coredata["progress"] ))
                     self.forward_to_broker( msg )
+            elif msgtype == "complete":
+                if senderid in self.cores:                
+                    coredata = self.cores[ senderid ]
+                    logger.info("Core %s completed the job"%( senderid ))
+                    self.forward_to_broker( msg )
+                    del self.cores[ senderid ]
             else:
                 # forward to broker instead
                 self.forward_to_broker( msg )             
@@ -115,9 +121,11 @@ class NodeDaemon( object ):
         except nn.NanoMsgAPIError as e:
             return False
 
-    def process_core_message( self, msgtype, data ):
+    def process_core_message( self, msgtype, senderid, data ):
         if msgtype == "_hello":
             self.process_hello( data )
+        if msgtype == "_todo":
+            self.process_todo( senderid, data )
 
     def forward_to_broker( self, msg ):
         if self.pub != None:
@@ -135,17 +143,23 @@ class NodeDaemon( object ):
         priority = remap_utils.safe_get( data, "priority" )
         coreid = remap_utils.core_id( self.nodeid, pid )
         self.cores[ coreid ] = {"coreid":coreid,"ts_last_seen":time.time(),"progress":-1,"pid":pid,"priority":priority}
-        msg = remap_utils.pack_msg( "%s._hey.%s"%(coreid, self.nodeid), {"result":"OK","msgid":msgid,"coreid":coreid} )
-        if self.sub != None:
-            self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, coreid)
+        msg = remap_utils.pack_msg( "%s._hey.%s"%(coreid, self.nodeid), {"msgid":msgid,"coreid":coreid} )
         logger.info( "A core registered %s"%( coreid ))
         self.bus.send( msg )
+
+    def process_todo( self, senderid, data ):
+        coredata = self.cores[ senderid ]
+        work = self.hw.grab_work_item()
+        if work != None:
+            msg = remap_utils.pack_msg( "%s._work.%s"%(senderid, self.nodeid), work )
+            logger.info( "A core was given some work to do: %s"%( senderid ))
+            self.bus.send( msg )
 
     def process_broker_messages( self ):
         if self.sub == None:
             # No broker is known yet.
             if self.brokerChanged:
-                logger.info("The broker configuration changed.") 
+                logger.info("The broker configuration changed.")
                 self.setup_broker()
                 if self.sub == None:
                     logger.info("Failed broker setup.")

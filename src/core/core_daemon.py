@@ -4,6 +4,7 @@ import nanomsg as nn
 from nanomsg import wrapper as nn_wrapper
 import logging
 import time
+import json
 
 parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent)
@@ -34,7 +35,10 @@ class CoreDaemon( object ):
         self.jobid = "unknown"
         self.priority = 0
         self.work = None
-        self.workRequested = False
+        self.ts_workRequested = 0
+        self.keepWorking = True
+        self.workertype = None
+        self.progress = 0
 
     # The core daemon connects to the node first.
     def setup_node( self ):
@@ -55,7 +59,7 @@ class CoreDaemon( object ):
             if recipientid == self.coreid:
                 # This is directed at this core specifically, so it's more of a req/rep type
                 self.process_personal_message( msgtype, senderid, data )
-            if recipientid == "global":
+            elif recipientid == "global":
                 self.process_global_message( msgtype, senderid, data )
             elif recipientid == "local":
                 self.process_local_message( msgtype, senderid, data )    
@@ -101,9 +105,31 @@ class CoreDaemon( object ):
 
     def process_personal_message( self, msgtype, sender, data ):
         if msgtype == "_work":
+            # INFO:CoreDaemon:Received message from node: b'88750194067218_4516._work.88750194067218 {"inputfile": "/remote/data/tomsawyer.txt", "type": "mapper", "appconfig": "/remote/app/wordcount/appconfig.json", "outputdir": "/remote/im/jobid", "appmodule": "wordcount"}'
             # data contains work
             # start that work
-            pass
+            self.work = data
+            self.jobid = self.work["jobid"]
+            self.workertype = self.work["type"]
+            self.appname = self.work["appmodule"]
+            self.app = __import__(self.appname, fromlist = ["*"])
+            try:
+                ap = open( self.work["appconfig"], 'r' )
+                contents = ap.read()
+                self.appconfig = json.loads( contents )
+            except IOError as ioe:
+                raise AppException( "App config not found" ) from ioe
+
+            if self.workertype == 'mapper':
+                # This is a mapper operation
+                self.input = self.app.create_mapper_reader( self.work["inputfile"] )
+                self.outputdir = self.work["outputdir"]
+                self.partitions = {}
+            else:
+                # This is a reducer operation        
+                self.input = self.app.create_mapper_reader( self.work["inputfile"] )
+                outputdir = self.work["outputdir"]
+                self.partitions = {}
 
     def process_global_message( self, msgtype, sender, data ):
         pass
@@ -117,19 +143,52 @@ class CoreDaemon( object ):
 
     def send_status( self ):
         if self.work != None:
-            self.node.send( remap_utils.pack_msg( "%s.status.%s"%(self.jobid, self.coreid), {"progress":0} ) )
+            self.node.send( remap_utils.pack_msg( "%s.status.%s"%(self.jobid, self.coreid), {"progress":self.progress} ) )
 
     def do_more_work( self ):
         if self.work != None:
-            # so, do some work
-            pass
-        else:
-            if self.workRequested:
-                time.sleep(0.1)
+            if self.input.isComplete():
+                self.node.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {} ) )
+                # allow time for message to be sent
+                time.sleep( 0.5 )
+                self.keepWorking = False
                 return
+
+            # so, do some work
+            for k1, v1 in self.input.read():
+                for part, k2, v2 in self.app.map( k1, v1 ):
+                    if part not in self.partitions:
+                        self.partitions[ part ] = self.app.create_mapper_partitioner( self.outputdir, part, self.coreid )
+                    self.partitions[ part ].store( k2, v2 )
+
+                p = self.input.progress()
+                if p > self.progress+1:
+                    self.progress = int(p)
+                    break
+
+            if self.input.isComplete():
+                self.progress = 100
+                self.input.close()
+                for part in self.partitions:
+                    self.partitions[part].sort_flush_close()
+            self.send_status()
+        else:
+            if self.ts_workRequested > 0:
+                if (time.time() - self.ts_workRequested) < 5:
+                    # prevent loop with 100% cpu utilization
+                    # wait at most 5 seconds for work to drop in.
+                    time.sleep(0.1)
+                    return
+                else:
+                    self.keepWorking = False
+                    return
+
             logger.info( "Grabbing work item from node" )
-            self.workRequested = True
-            self.node.send( remap_utils.pack_msg( "node._todo.%d"%(self.coreid), {} ) )
+            self.ts_workRequested = time.time()
+            self.node.send( remap_utils.pack_msg( "node._todo.%s"%(self.coreid), {} ) )
+
+    def shutdown( self ):
+        self.node.close()
 
 if __name__ == "__main__":
 
@@ -159,7 +218,7 @@ if __name__ == "__main__":
 
     core.set_node_timeout( 0 )
 
-    while( True ):
+    while( core.keepWorking ):
         try:
             while (core.process_node_messages()):
                 pass
@@ -172,5 +231,5 @@ if __name__ == "__main__":
             logger.exception( re )
             # take other actions
 
-        core.send_status()
+    core.shutdown()
 
