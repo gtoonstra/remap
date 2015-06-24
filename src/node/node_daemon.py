@@ -130,7 +130,6 @@ class NodeDaemon( object ):
     def forward_to_broker( self, msg ):
         if self.pub != None:
             try:
-                logger.info("Sending %s to broker"%(msg))
                 self.pub.send( msg )
             except nn.NanoMsgAPIError as e:
                 pass

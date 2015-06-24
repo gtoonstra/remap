@@ -229,6 +229,8 @@ class CoreDaemon( object ):
                 break
 
         if self.input.isComplete():
+            self.completedparts = self.completedparts + 1
+            self.progress = (self.completedparts * self.fraction)
             self.input.close()
             self.input = None
 
