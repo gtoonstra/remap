@@ -85,10 +85,9 @@ class TextPartFileReader(BaseReader):
 
     def read( self ):
         for line in self.f:
-            self.pos = self.pos + len(line)
             key, data = line.split(',', 1)
             l = json.loads( data )
-            yield (key, l)
+            yield (key, l, len(line))
         self.complete = True
 
     def isComplete( self ):

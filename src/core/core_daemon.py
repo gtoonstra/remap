@@ -5,6 +5,8 @@ from nanomsg import wrapper as nn_wrapper
 import logging
 import time
 import json
+import heapq
+from operator import itemgetter
 
 parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent)
@@ -40,8 +42,11 @@ class CoreDaemon( object ):
         self.keepWorking = True
         self.workertype = None
         self.progress = 0
-        self.partprogress = 0.0
+        self.processed = 0
+        self.total_size = 0
         self.input = None
+        self.prevkey = None
+        self.prevlist = None
 
     # The core daemon connects to the node first.
     def setup_node( self ):
@@ -58,7 +63,6 @@ class CoreDaemon( object ):
     def process_node_messages( self ):
         try:
             msg = self.sub.recv()
-            logger.info( "Received message from node: %s"%( msg ))
             msgprefix, data = remap_utils.unpack_msg( msg )
             recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
 
@@ -123,6 +127,7 @@ class CoreDaemon( object ):
             # Data is the work to be executed
             # Prepare to start that work
             #
+            logger.info("Received work item from node")
             self.work = data
             self.jobid = self.work["jobid"]
             self.workertype = self.work["type"]
@@ -151,6 +156,19 @@ class CoreDaemon( object ):
                 self.partition = self.work["partition"]
                 self.reducerWriter = self.app.create_reducer_writer( self.outputdir, self.partition )
 
+                self.sources = []
+                for filename in self.reducerfiles:
+                    f = self.app.create_reducer_reader( os.path.join( self.inputdir, filename ))
+                    self.sources.append( f )
+                    self.total_size = self.total_size + f.filesize
+
+                decorated = [
+                    ((key,list_of_values,recsize) for key,list_of_values,recsize in f.read())
+                    for f in self.sources]
+                self.merged = heapq.merge(*decorated)
+        else:
+            logger.warn("Unknown personal message received from node: %s"%( msgtype ))
+
     def process_global_message( self, msgtype, sender, data ):
         pass
 
@@ -160,6 +178,8 @@ class CoreDaemon( object ):
     def process_node_message( self, msgtype, sender, data ):
         if msgtype == "_plzreg":
             self.register()
+        else:
+            logger.warn("Unknown node message received from node: %s"%( msgtype ))
 
     def send_status( self ):
         if self.work != None:
@@ -219,31 +239,46 @@ class CoreDaemon( object ):
 
     # The work to be done as a reducer
     def reducer_work( self ):
-        if self.input == None:
-            if len(self.reducerfiles) == 0:
-                self.pub.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"partition":self.work["partition"]} ) )
-                # allow time for message to be sent
-                time.sleep( 0.5 )
-                self.keepWorking = False
-                return
-            self.input = self.app.create_reducer_reader( os.path.join( self.inputdir, self.reducerfiles.pop(0) ))
+        if len(self.sources) == 0:
+            self.pub.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"inputdir":self.work["inputdir"]} ) )
+            # allow time for message to be sent
+            time.sleep( 0.5 )
+            self.keepWorking = False
+            return
 
-        for key,list_of_values in self.input.read():
-            for k3,v3 in self.app.reduce( key, list_of_values ):
-                self.reducerWriter.store( k3, v3 )
+        readrec = False
+        for k2,v2,recsize in self.merged:
+            readrec = True
+            if self.prevkey == None:
+                # Initialize the very first step
+                self.prevkey = k2
+                self.prevlist = v2
+                self.processed = recsize
+            elif self.prevkey != k2:
+                # The key changed. Dump all values of previous step
+                for k3,v3 in self.app.reduce( self.prevkey, self.prevlist ):
+                    self.reducerWriter.store( k3, v3 )
+                self.prevkey = k2
+                self.prevlist = v2
+                self.processed = self.processed + recsize
+            else:
+                # Add another record to the list
+                self.prevlist = self.prevlist + v2
+                self.processed = self.processed + recsize
 
-            p = self.input.progress()
-            if p > self.partprogress + 0.01:
-                self.partprogress = p
-                self.progress = self.partprogress * self.fraction + (self.completedparts * self.fraction)
+            p = (self.processed / self.total_size) * 100
+            if p > self.progress+1:
+                self.progress = int(p)
+                # breaking out of the loop to check up on messages
                 break
 
-        if self.input.isComplete():
-            self.completedparts = self.completedparts + 1
-            self.progress = (self.completedparts * self.fraction)
-            self.input.close()
-            self.partprogress = 0
-            self.input = None
+        if not readrec:
+            # done
+            self.progress = 100
+            for f in self.sources:
+                f.close()
+            self.sources = []
+            self.reducerWriter.close()
 
         self.send_status()
 
