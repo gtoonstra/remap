@@ -4,13 +4,14 @@ import nanomsg as nn
 from nanomsg import wrapper as nn_wrapper
 import logging
 import time
-from bonjour_detect import BonjourResolver
+
 import sys
 from node_hardware import NodeHardware
 
 parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent)
 
+from lib.bonjour_detect import BonjourResolver
 import lib.remap_utils as remap_utils
 import lib.remap_constants as remap_constants
 from lib.remap_utils import RemapException
@@ -37,7 +38,7 @@ class NodeDaemon( object ):
         self.broker_address = "unknown"
         self.brokerChanged = False
         self.bsub = None
-        self.pub = None
+        self.bpub = None
         self.tot_m_rcv = 0
         self.hw = NodeHardware()
         self.nodeid = remap_utils.node_id()
@@ -90,8 +91,8 @@ class NodeDaemon( object ):
         self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.nodeid)
         self.apply_timeouts()
 
-        self.pub = nn.Socket( nn.PUB )
-        self.pub.connect( "tcp://%s:8686"%( self.broker_address ))
+        self.bpub = nn.Socket( nn.PUB )
+        self.bpub.connect( "tcp://%s:8686"%( self.broker_address ))
 
         logger.info("Broker setup complete")
 
@@ -104,7 +105,7 @@ class NodeDaemon( object ):
             if msgtype.startswith("_"):
                 # node message
                 self.process_core_message( msgtype, senderid, data )
-            elif msgtype == "status":
+            elif msgtype == "corestatus":
                 if senderid in self.cores:                
                     coredata = self.cores[ senderid ]
                     coredata["ts_last_seen"] = time.time()
@@ -131,9 +132,9 @@ class NodeDaemon( object ):
             self.process_todo( senderid, data )
 
     def forward_to_broker( self, msg ):
-        if self.pub != None:
+        if self.bpub != None:
             try:
-                self.pub.send( msg )
+                self.bpub.send( msg )
             except nn.NanoMsgAPIError as e:
                 pass
 
@@ -200,6 +201,7 @@ class NodeDaemon( object ):
             if (new_ts - last_ts) > remap_constants.MAX_STATUS_DELAY:
                 logger.info("Core %s is considered dead."%( key ))
                 kill_list.append( key )
+                # Add code here to kill core just in case.
 
         for key in kill_list:                
             del self.cores[ key ]

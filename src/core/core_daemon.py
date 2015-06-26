@@ -183,7 +183,7 @@ class CoreDaemon( object ):
 
     def send_status( self ):
         if self.work != None:
-            self.pub.send( remap_utils.pack_msg( "%s.status.%s"%(self.jobid, self.coreid), {"progress":self.progress} ) )
+            self.pub.send( remap_utils.pack_msg( "%s.corestatus.%s"%(self.jobid, self.coreid), {"progress":self.progress} ) )
 
     def do_more_work( self ):
         # Check if we have some work to do already

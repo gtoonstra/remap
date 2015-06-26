@@ -54,6 +54,5 @@ docs/_build/
 # PyBuilder
 target/
 
-im/
 3rdparty/
 
