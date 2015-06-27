@@ -20,7 +20,6 @@ class Monitor(object):
         self.jobsdir = os.path.join( self.rootdir, "job" )
         self.datadir = os.path.join( self.rootdir, "data" )
         self.nodes = {}
-        self.inputfiles = {}
 
     def list_apps( self ):
         apps = []

@@ -40,27 +40,10 @@ class JobsView(FlaskView):
     def index(self):
         return Response(json.dumps( monitor.list_jobs() ),  mimetype='application/json')
     
-    @route('/startmapper', methods=["POST"])
-    def startmapper(self):
+    @route('/start', methods=["POST"])
+    def start(self):
         json_data = request.get_json()
-        priority = json_data["priority"]
-        app = json_data["app"]
-        inputdir = json_data["inputdir"]
-        parallellism = json_data["parallellism"]
-        results = monitor.start_mapper_job( app, priority, inputdir, None, parallellism )
-
-        return Response(json.dumps(results),  mimetype='application/json')
-
-    @route('/startreducer', methods=["POST"])
-    def startreducer(self):
-        json_data = request.get_json()
-        priority = json_data["priority"]
-        app = json_data["app"]
-        jobid = json_data["jobid"]
-        outputdir = json_data["outputdir"]
-        parallellism = json_data["parallellism"]
-        results = monitor.start_reducer_job( app, priority, jobid, outputdir, parallellism )
-
+        results = monitor.start_job( json_data )
         return Response(json.dumps(results),  mimetype='application/json')
 
 class NodesView(FlaskView):

@@ -20,80 +20,38 @@ logging.basicConfig( level=logging.INFO )
 logger = logging.getLogger("Initiator")
 
 class JobPlanner(object):
-    def __init__(self, jobid, app, config_file, relconfig_file, inputdir, relinputdir, outputdir, reloutputdir):
-        self.jobid = jobid
-        self.app = app
-        self.appconfig = relconfig_file
-
+    def __init__(self, config_file):
         f = open(config_file)
         data = f.read()
         self.config = json.loads(data)
-        self.inputdir = inputdir
-        self.relinputdir = relinputdir
-        self.outputdir = outputdir
-        self.reloutputdir = reloutputdir
 
-    def define_mapper_jobs( self, priority ):
-        # First, let's just generate a list of jobs
-        mapperjobs = {}
-
-        # Grab all input files
-        files = [f for f in os.listdir( self.inputdir ) if os.path.isfile(os.path.join(self.inputdir,f))]
-
-        logger.info("Found %d files to process in %s"%( len(files), self.inputdir ))
-
-# nanocat --pub --connect-local 8686 --delay 1 --data 'local.jobstart.jobid {"priority":5,"cores":[{"jobid":"jobid","appmodule":"wordcount","appconfig":"wordcount/appconfig.json","type":"mapper","inputfile":"gutenberg/tomsawyer.txt"}]}'
-
-# nanocat --pub --connect-local 8686 --delay 1 --data 'local.jobstart.jobid {"priority":5,"appdir":"/remote/job/jobid/app","cores":[{"jobid":"jobid","appmodule":"wordcount","appconfig":"wordcount/appconfig.json","type":"reducer","outputdir":"wordscounted","partition":"_default"}]}'
+    def task_per_file_in_dir( self, job_def_cb, input_dir ):
+        tasks = {}
+        files = [f for f in os.listdir( input_dir ) if os.path.isfile(os.path.join(input_dir,f))]
+        logger.info("Found %d files to process in %s"%( len(files), input_dir  ))
 
         ctr = 0
-        # ( Here app config probably tells us how to split files. Not doing that for now. Just process whole thing )
         for f in files:
-            inputfile = os.path.join( self.relinputdir, f )
-            job = { "inputfile": inputfile }
-            job["jobid"] = self.jobid
-            job["priority"] = priority
-            job["appdir"] = self.app
-            job["appconfig"] = self.appconfig
-            job["type"] = "mapper"
-            job["workid"] = "%05d"%( ctr )
-            mapperjobs[ inputfile ] = { "attempts": 0, "job": job }
+            key, jobdata = job_def_cb( f, ctr )
+            tasks[ key ] = { "attempts": 0, "jobdata": jobdata }
             ctr = ctr + 1
 
-        # Can't do anything for reducers yet, because this depends on number of partitions and mappers have
-        # to finish anyway prior to running reducers
-        return mapperjobs
+        return tasks
 
-    def define_reducer_jobs( self, priority ):
+    def task_per_dir( self, job_def_cb, input_dir ):
         # First, let's just generate a list of jobs
-        reducerjobs = {}
-
-        parts_dir = os.path.join( self.inputdir, "job", self.jobid, "part" )
+        tasks = {}
 
         # Grab all input files
-        dirs = [d for d in os.listdir( parts_dir ) if os.path.isdir(os.path.join(parts_dir,d))]
-        logger.info("Found %d partitions to process in %s"%( len(dirs), parts_dir ))
-
-# nanocat --pub --connect-local 8686 --delay 1 --data 'local.jobstart.jobid {"priority":5,"cores":[{"jobid":"jobid","appmodule":"wordcount","appconfig":"wordcount/appconfig.json","type":"mapper","inputfile":"gutenberg/tomsawyer.txt"}]}'
-
-# nanocat --pub --connect-local 8686 --delay 1 --data 'local.jobstart.jobid {"priority":5,"appdir":"/remote/job/jobid/app","cores":[{"jobid":"jobid","appmodule":"wordcount","appconfig":"wordcount/appconfig.json","type":"reducer","outputdir":"wordscounted","partition":"_default"}]}'
+        dirs = [d for d in os.listdir( input_dir ) if os.path.isdir(os.path.join(input_dir,d))]
+        logger.info("Found %d partitions to process in %s"%( len(dirs), input_dir ))
 
         # ( Here app config probably tells us how to split files. Not doing that for now. Just process whole thing )
         for d in dirs:
-            job = {}
-            job["jobid"] = self.jobid
-            job["partition"] = d
-            job["priority"] = priority
-            job["appdir"] = self.app
-            job["appconfig"] = self.appconfig
-            job["type"] = "reducer"
-            job["outputdir"] = self.reloutputdir
-            job["workid"] = d
-            reducerjobs[ d ] = { "attempts": 0, "job": job }
+            key, jobdata = job_def_cb( d )
+            tasks[ key ] = { "attempts": 0, "jobdata": jobdata }
 
-        # Can't do anything for reducers yet, because this depends on number of partitions and mappers have
-        # to finish anyway prior to running reducers
-        return reducerjobs
+        return tasks
 
     def distribute_jobs_over_nodes( self, availjobs, allocatedjobs, nodes, parallellism ):
         # Making a copy first, it gets modified
@@ -143,7 +101,7 @@ class JobPlanner(object):
                         if workfile in allocatedjobs:
                             continue
                         corejobs[ workfile ] = {}
-                        corejobs[ workfile ]["jobdata"] = data["job"]
+                        corejobs[ workfile ]["jobdata"] = data["jobdata"]
                         corejobs[ workfile ]["nodeid"] = key
                         corejobs[ workfile ]["ts_start"] = time.time()
                         corejobs[ workfile ]["ts_finish"] = time.time() + 7

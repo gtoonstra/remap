@@ -30,17 +30,21 @@ class Initiator( Monitor ):
         self.brokerChanged = False
         self.bsub = None
         self.bpub = None
-        self.jobid = None
         self.bonjour = BonjourResolver( "_remap._tcp", self.cb_broker_changed )
         self.bonjour.start()
         self.jobid = remap_utils.unique_id()
-        self.priority = 0
-        self.refreshed = time.time()
+        self.refreshed = 0
         self.job_in_progress = False
-        self.rejectedjobs = {}
-        self.completedjobs = {}
+        self.rejectedtasks = {}
+        self.completedtasks = {}
         self.last_check = time.time()
-        self.phase = "mapper"
+
+    def load_plugin(self, name):
+        try:
+            mod = __import__("module_%s" % name)
+            return mod
+        except ImportError as ie:
+            raise RemapException( "No such worker type: %s"%( name ))
 
     def apply_timeouts( self ):
         if self.bsub != None:
@@ -116,35 +120,21 @@ class Initiator( Monitor ):
             return False
 
     def update_corestatus( self, recipientid, senderid, data ):
-        if data["type"] == "mapper":
-            inputfile = data["inputfile"]
-            if inputfile in self.allocatedjobs:
-                job = self.allocatedjobs[ inputfile ]
-                job["ts_finish"] = time.time() + 7
+        key = self.manager.get_work_key( data )
+        if key in self.allocatedtasks:
+            job = self.allocatedtasks[ key ]
+            job["ts_finish"] = time.time() + 7
 
     def update_corecomplete( self, recipientid, senderid, data ):
-        if data["type"] == "mapper":
-            inputfile = data["inputfile"]
-            logger.info( "Job %s completed."%( inputfile ) )
-            if inputfile in self.allocatedjobs:
-                job = self.allocatedjobs[ inputfile ]
-                if job["jobdata"]["inputfile"] == inputfile:
-                    mapperjob = self.mapperjobs[ inputfile ]
-                    self.completedjobs[ inputfile ] = mapperjob
-                    del self.mapperjobs[ inputfile ]
-                    del self.allocatedjobs[ inputfile ]
-                    logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.mapperjobs), len(self.allocatedjobs), len(self.completedjobs), len(self.rejectedjobs) ))
-        if data["type"] == "reducer":
-            partition = data["partition"]
-            logger.info( "Job %s completed."%( partition ) )
-            if partition in self.allocatedjobs:
-                job = self.allocatedjobs[ partition ]
-                if job["jobdata"]["partition"] == partition:
-                    reducerjob = self.reducerjobs[ partition ]
-                    self.completedjobs[ partition ] = reducerjob
-                    del self.reducerjobs[ partition ]
-                    del self.allocatedjobs[ partition ]
-                    logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.reducerjobs), len(self.allocatedjobs), len(self.completedjobs), len(self.rejectedjobs) ))
+        key = self.manager.get_work_key( data )
+        logger.info( "Job %s completed."%( key ) )
+        if key in self.allocatedtasks:
+            job = self.allocatedtasks[ key ]
+            task = self.tasks[ key ]
+            self.completedtasks[ key ] = task
+            del self.tasks[ key ]
+            del self.allocatedtasks[ key ]
+            logger.info( "%d tasks left, %d tasks committed, %d tasks complete, %d tasks failed."%( len(self.tasks), len(self.allocatedtasks), len(self.completedtasks), len(self.rejectedtasks) ))
 
     def update_hands( self, recipientid, senderid, data ):
         # "%s.raisehand.%s"%( senderid, self.nodeid ), {"cores":3,"interruptable":0}
@@ -154,164 +144,89 @@ class Initiator( Monitor ):
             self.nodes[ senderid ] = {}
             self.nodes[ senderid ]["avail"] = data
 
-    def start_mapper_job( self, appname, priority, inputdir, outputdir, parallellism ):
+    def start_job( self, jobdata ):
         if self.job_in_progress:
             raise RemapException("A job is currently in progress on this monitor")
 
-        self.phase = "mapper"
+        if "type" not in jobdata:
+            raise RemapException("Must have job type specified" )
+        if "priority" not in jobdata:
+            raise RemapException("Must have priority specified" )
+        if "parallellism" not in jobdata:
+            raise RemapException("Must have parallellism specified" )
+
+        self.jobtype = jobdata[ "type" ]
+        self.priority = jobdata[ "priority" ]
+        self.parallellism = jobdata[ "parallellism" ]
+        plugin = self.load_plugin( self.jobtype )
+        self.rejectedtasks = {}
+        self.completedtasks = {}
 
         if self.jobid != None:
-            # unsubscribe from old.
             self.bsub.set_string_option( nn.SUB, nn.SUB_UNSUBSCRIBE, self.jobid)
 
-        # subscribe to new
-        self.jobid = remap_utils.unique_id()
+        if "jobid" in jobdata:
+            self.jobid = jobdata["jobid"]
+            del jobdata[ "jobid" ]
+        else:
+            self.jobid = remap_utils.unique_id()
+
         self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.jobid)
 
-        if appname not in self.list_apps():
-            raise RemapException("No such application: %s"%(appname))
+        if "app" not in jobdata:
+            raise RemapException( "The name of the app must be provided" )
 
-        self.appname = appname
-        self.parallellism = parallellism
-        self.inputdir = os.path.join( self.datadir, inputdir.strip("/") )
+        if jobdata["app"] not in self.list_apps():
+            raise RemapException("No such application: %s"%(jobdata["app"]))
 
-        if not os.path.isdir( self.inputdir ):
-            raise RemapException("Input dir does not exist: %s"%(self.inputdir))
+        config = {"jobid":self.jobid,"remaproot":self.remaproot}
 
-        self.relinputdir = inputdir
-        self.reloutputdir = outputdir
+        logger.info( "Started a new job: %s"%( self.jobid ))
+        self.manager = plugin.create_manager( jobdata, config )
 
-        if priority != self.priority or ((time.time() - self.refreshed) > 60):
-            # Not same priority or refreshed > 60s
+        if ((time.time() - self.refreshed) > 60):
+            # Not refreshed > 60s
             self.refresh_nodes( self.priority )
-            # Wait for the network to be refreshed, so we work with latest data
-            r = Timer(1.0, self.resume_mapper_job_start, ())
+            # Wait for a bunch of nodes to advertise themselves
+            r = Timer(1.0, self.resume, ())
             r.start()
         else:
-            self.resume_mapper_job_start()
+            self.resume()
 
-        return "OK"
+    def resume( self ):
+        self.manager.prepare()
 
-    def resume_mapper_job_start( self ):
-        logger.info("Starting a mapper job: %s"%( self.appname ))
+        self.planner = JobPlanner( self.manager.config_file )
+        self.tasks = self.manager.plan_jobs( self.planner )
 
-        self.app_dir = os.path.join( self.appsdir, self.appname )
-        self.job_dir = os.path.join( self.jobsdir, self.jobid )
-        self.app_job_dir = os.path.join( self.job_dir, "app", self.appname )
-        self.partitions_dir = os.path.join( self.job_dir, "part" )
-        self.config_file = os.path.join( self.app_job_dir, "appconfig.json" )
-        self.relconfig_file = os.path.join( self.appname, "appconfig.json" )
+        logger.info( "Found %d tasks to execute"%( len(self.tasks) ))
 
-        os.makedirs( self.job_dir )
-        # app job dir created by copytree
-        # os.makedirs( self.app_job_dir )
-        os.makedirs( self.partitions_dir )
-        
-        try:
-            shutil.copytree(self.app_dir, self.app_job_dir)
-            # Directories are the same
-        except shutil.Error as e:
-            raise RemapException("Directory not copied: %s"%(e))
-        except OSError as e:
-            raise RemapException("Directory not copied: %s"%(e))
-
-        self.planner = JobPlanner( self.jobid, self.appname, self.config_file, self.relconfig_file, self.inputdir, self.relinputdir, None, None )
-        self.mapperjobs = self.planner.define_mapper_jobs( self.priority )
-        logger.info( "Found %d mapper jobs to execute"%( len(self.mapperjobs) ))
-
-        numnodes, self.allocatedjobs = self.planner.distribute_jobs_over_nodes( self.mapperjobs, {}, self.nodes, self.parallellism )
-        if len(self.allocatedjobs) == 0:
+        numnodes, self.allocatedtasks = self.planner.distribute_jobs_over_nodes( self.tasks, {}, self.nodes, self.parallellism )
+        if len(self.allocatedtasks) == 0:
             logger.error("No nodes found to distribute the tasks.")
             self.job_in_progress = False
             return
 
-        logger.info( "%d new tasks distributed over %d nodes."%( len(self.allocatedjobs), numnodes ))
+        logger.info( "%d new tasks distributed over %d nodes."%( len(self.allocatedtasks), numnodes ))
         self.job_in_progress = True
-        self.outbound_work( self.allocatedjobs )
+        self.outbound_work( self.allocatedtasks )
 
-    def start_reducer_job( self, appname, priority, jobid, outputdir, parallellism ):
-        if self.job_in_progress:
-            raise RemapException("A job is currently in progress on this monitor")
-
-        if appname not in self.list_apps():
-            raise RemapException("No such application: %s"%(appname))
-
-        self.phase = "reducer"
-
-        self.appname = appname
-        self.parallellism = parallellism
-        self.jobid = jobid
-        self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.jobid)
-
-        verifyDir = os.path.join( self.remaproot, "job", jobid )
-        self.outputdir = os.path.join( self.datadir, outputdir.strip("/") )
-
-        if not os.path.isdir( verifyDir ):
-            raise RemapException("Input dir does not exist: %s"%(verifyDir))
-        if os.path.isdir( self.outputdir ):
-            raise RemapException("Output dir already exists: %s"%(self.outputdir))
-
-        os.makedirs( self.outputdir )
-
-        self.reloutputdir = outputdir
-
-        if priority != self.priority or ((time.time() - self.refreshed) > 60):
-            # Not same priority or refreshed > 60s
-            self.refresh_nodes( self.priority )
-            # Wait for the network to be refreshed, so we work with latest data
-            r = Timer(1.0, self.resume_reducer_job_start, ())
-            r.start()
-        else:
-            self.resume_reducer_job_start()
-
-        return "OK"
-
-    def resume_reducer_job_start( self ):
-        logger.info("Starting a reducer job: %s"%( self.appname ))
-
-        self.app_dir = os.path.join( self.appsdir, self.appname )
-        self.job_dir = os.path.join( self.jobsdir, self.jobid )
-        self.app_job_dir = os.path.join( self.job_dir, "app", self.appname )
-        self.partitions_dir = os.path.join( self.job_dir, "part" )
-        self.config_file = os.path.join( self.app_job_dir, "appconfig.json" )
-        self.relconfig_file = os.path.join( self.appname, "appconfig.json" )
-       
-        try:
-            shutil.copytree(self.app_dir, self.app_job_dir)
-            # Directories are the same
-        except shutil.Error as e:
-            raise RemapException("Directory not copied: %s"%(e))
-        except OSError as e:
-            pass
-
-        self.planner = JobPlanner( self.jobid, self.appname, self.config_file, self.relconfig_file, self.remaproot, None, self.outputdir, self.reloutputdir )
-        self.reducerjobs = self.planner.define_reducer_jobs( self.priority )
-        logger.info( "Found %d reducer jobs to execute"%( len(self.reducerjobs) ))
-
-        numnodes, self.allocatedjobs = self.planner.distribute_jobs_over_nodes( self.reducerjobs, {}, self.nodes, self.parallellism )
-        if len(self.allocatedjobs) == 0:
-            logger.error("No nodes found to distribute the tasks.")
-            self.job_in_progress = False
-            return
-
-        logger.info( "%d new tasks distributed over %d nodes."%( len(self.allocatedjobs), numnodes ))
-        self.job_in_progress = True
-        self.outbound_work( self.allocatedjobs )
-
+    # In outbound work we update our local "jobs" data with timestamps
+    # when they were sent out and send the task data to nodes.
     def outbound_work( self, jobs ):
         nodes = {}
-        for inputfile, job in jobs.items():
+        for key, job in jobs.items():
             nodeid = job["nodeid"]
             if nodeid in nodes:
                 nodes[ nodeid ]["cores"].append( job["jobdata"] )
             else:
                 tasks = {}
-                tasks["priority"] = self.priority
                 tasklist = []
                 job["ts_start"] = time.time()
                 job["ts_finish"] = time.time() + 7
                 tasklist.append( job["jobdata"] )
                 tasks["cores"] = tasklist
+                tasks["priority"] = self.priority
                 nodes[ nodeid ] = tasks
 
         for nodeid, tasks in nodes.items():
@@ -319,93 +234,44 @@ class Initiator( Monitor ):
             self.forward_to_broker( msg )
 
     def check_progress( self ):
-        # corejobs are jobs in progress that actually run
-        # mapperjobs are jobs to be done
-        # In progress we simply check 
-
         if time.time() - self.last_check <= 4:
             return
 
-        if self.phase == "mapper":
-            self.check_progress_mapper()
-        if self.phase == "reducer":
-            self.check_progress_reducer()
-
-        self.last_check = time.time()        
-
-    def check_progress_mapper(self):
         newtime = time.time()
         kill_list = []
-        for inputfile, job in self.allocatedjobs.items():
+        for key, job in self.allocatedtasks.items():
             if newtime > job["ts_finish"]:
                 # This job hasn't been updated, probably dead.
                 jobdata = job["jobdata"]
-                if jobdata["type"] == "mapper":
-                    # this is a mapper job. Update mapperjobs with an attempt + 1
-                    mapperjob = self.mapperjobs[ inputfile ]
-                    mapperjob["attempts" ] = mapperjob["attempts" ] + 1
-                    nodeid = job["nodeid"]
-                    logger.info( "Input file %s failed on node %s. Reattempting elsewhere"%( inputfile, nodeid ))
-                    if mapperjob["attempts" ] > 4:
-                        # 5 attempts so far. let's cancel it.
-                        logger.warn("Input file %s failed 5 attempts. Cancelling file to reject."%( inputfile ))
-                        del self.mapperjobs[ inputfile ]
-                        kill_list.append( inputfile )
-                        self.rejectedjobs[ inputfile ] = mapperjob
+                # Update tasks with an attempt + 1
+                task = self.tasks[ key ]
+                task["attempts" ] = task["attempts" ] + 1
+                nodeid = job["nodeid"]
+                logger.info( "Task %s failed on node %s. Reattempting elsewhere"%( key, nodeid ))
+                if task["attempts" ] > 4:
+                    # 5 attempts so far. let's cancel it.
+                    logger.warn("Task %s failed 5 attempts. Cancelling file to reject."%( key ))
+                    del self.tasks[ key ]
+                    kill_list.append( key )
+                    self.rejectedtasks[ key ] = task
 
-        for inputfile in kill_list:
-            del self.allocatedjobs[inputfile]
+        for key in kill_list:
+            del self.allocatedtasks[key]
 
         # Now also check if there are jobs that can be started
-        if len(self.mapperjobs) > 0:
-            numnodes, new_allocations = self.planner.distribute_jobs_over_nodes( self.mapperjobs, self.allocatedjobs, self.nodes, self.parallellism )
+        if len(self.tasks) > 0:
+            numnodes, new_allocations = self.planner.distribute_jobs_over_nodes( self.tasks, self.allocatedtasks, self.nodes, self.parallellism )
             if numnodes > 0:
                 logger.info( "%d new tasks distributed over %d nodes"%( len(new_allocations), numnodes ))
                 self.outbound_work( new_allocations )
-                self.allocatedjobs.update( new_allocations )
+                self.allocatedtasks.update( new_allocations )
 
-        if len(self.mapperjobs) == 0 and len(self.allocatedjobs) == 0:
-            # finished mappers
+        if len(self.tasks) == 0 and len(self.allocatedtasks) == 0:
+            # finished all work
             self.job_in_progress = False
-            logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.mapperjobs), len(self.allocatedjobs), len(self.completedjobs), len(self.rejectedjobs) ))
+            logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.tasks), len(self.allocatedtasks), len(self.completedtasks), len(self.rejectedtasks) ))
 
-    def check_progress_reducer( self ):
-        newtime = time.time()
-        kill_list = []
-        for partition, job in self.allocatedjobs.items():
-            if newtime > job["ts_finish"]:
-                # This job hasn't been updated, probably dead.
-                jobdata = job["jobdata"]
-                if jobdata["type"] == "reducer":
-                    # this is a reducer job. Update reducerjobs with an attempt + 1
-                    if partition in self.reducerjobs:
-                        reducerjob = self.reducerjobs[ partition ]
-                        reducerjob["attempts" ] = reducerjob["attempts" ] + 1
-                        nodeid = job["nodeid"]
-                        logger.info( "Input directory %s failed on node %s. Reattempting elsewhere"%( partition, nodeid ))
-                        if reducerjob["attempts" ] > 4:
-                            # 5 attempts so far. let's cancel it.
-                            logger.warn("Partition %s failed 5 attempts. Cancelling file to reject."%( partition ))
-                            del self.reducerjobs[ partition ]
-                            kill_list.append( partition )
-                            self.rejectedjobs[ partition ] = reducerjob
-
-        for partition in kill_list:
-            del self.allocatedjobs[partition]
-
-        # Now also check if there are jobs that can be started
-        if len(self.reducerjobs) > 0:
-            numnodes, new_allocations = self.planner.distribute_jobs_over_nodes( self.reducerjobs, self.allocatedjobs, self.nodes, self.parallellism )
-            if numnodes > 0 and len(new_allocations) > 0:
-                logger.info( "%d new tasks distributed over %d nodes"%( len(new_allocations), numnodes ))
-                self.outbound_work( new_allocations )
-                self.allocatedjobs.update( new_allocations )
-
-        if len(self.reducerjobs) == 0 and len(self.allocatedjobs) == 0:
-            # finished mappers
-            self.phase = "finish"
-            self.job_in_progress = False
-            logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.reducerjobs), len(self.allocatedjobs), len(self.completedjobs), len(self.rejectedjobs) ))
+        self.last_check = time.time()        
 
     def refresh_nodes( self, priority ):
         self.nodes = {}
