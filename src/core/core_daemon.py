@@ -199,7 +199,7 @@ class CoreDaemon( object ):
             if self.workertype == "mapper":
                 self.pub.send( remap_utils.pack_msg( "%s.corestatus.%s"%(self.jobid, self.coreid), {"type":self.workertype,"inputfile":self.work["inputfile"],"progress":self.progress} ) )
             else:
-                self.pub.send( remap_utils.pack_msg( "%s.corestatus.%s"%(self.jobid, self.coreid), {"type":self.workertype,"progress":self.progress} ) )
+                self.pub.send( remap_utils.pack_msg( "%s.corestatus.%s"%(self.jobid, self.coreid), {"type":self.workertype,"partition":self.partition,"progress":self.progress} ) )
 
     def do_more_work( self ):
         # Check if we have some work to do already
@@ -258,7 +258,7 @@ class CoreDaemon( object ):
     # The work to be done as a reducer
     def reducer_work( self ):
         if len(self.sources) == 0:
-            self.pub.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"partition":self.partition} ) )
+            self.pub.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"type":"reducer","partition":self.partition} ) )
             # allow time for message to be sent
             time.sleep( 0.5 )
             self.keepWorking = False

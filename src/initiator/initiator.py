@@ -134,6 +134,17 @@ class Initiator( Monitor ):
                     del self.mapperjobs[ inputfile ]
                     del self.allocatedjobs[ inputfile ]
                     logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.mapperjobs), len(self.allocatedjobs), len(self.completedjobs), len(self.rejectedjobs) ))
+        if data["type"] == "reducer":
+            partition = data["partition"]
+            logger.info( "Job %s completed."%( partition ) )
+            if partition in self.allocatedjobs:
+                job = self.allocatedjobs[ partition ]
+                if job["jobdata"]["partition"] == partition:
+                    reducerjob = self.reducerjobs[ partition ]
+                    self.completedjobs[ partition ] = reducerjob
+                    del self.reducerjobs[ partition ]
+                    del self.allocatedjobs[ partition ]
+                    logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.reducerjobs), len(self.allocatedjobs), len(self.completedjobs), len(self.rejectedjobs) ))
 
     def update_hands( self, recipientid, senderid, data ):
         # "%s.raisehand.%s"%( senderid, self.nodeid ), {"cores":3,"interruptable":0}
@@ -233,6 +244,8 @@ class Initiator( Monitor ):
         self.appname = appname
         self.parallellism = parallellism
         self.jobid = jobid
+        self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.jobid)
+
         verifyDir = os.path.join( self.remaproot, "job", jobid )
         self.outputdir = os.path.join( self.datadir, outputdir.strip("/") )
 
@@ -344,7 +357,7 @@ class Initiator( Monitor ):
                         self.rejectedjobs[ inputfile ] = mapperjob
 
             for inputfile in kill_list:
-                del self.corejobs[inputfile]
+                del self.mapperjobs[inputfile]
 
         # Now also check if there are jobs that can be started
         if len(self.mapperjobs) > 0:
@@ -360,7 +373,40 @@ class Initiator( Monitor ):
             self.job_in_progress = False
 
     def check_progress_reducer( self ):
-        pass
+        newtime = time.time()
+        for partition, job in self.allocatedjobs.items():
+            kill_list = []
+            if newtime > job["ts_finish"]:
+                # This job hasn't been updated, probably dead.
+                jobdata = job["jobdata"]
+                if jobdata["type"] == "reducer":
+                    # this is a mapper job. Update mapperjobs with an attempt + 1
+                    reducerjob = self.reducerjobs[ partition ]
+                    reducerjob["attempts" ] = reducerjob["attempts" ] + 1
+                    nodeid = job["nodeid"]
+                    logger.info( "Input directory %s failed on node %s. Reattempting elsewhere"%( partition, nodeid ))
+                    if reducerjob["attempts" ] > 4:
+                        # 5 attempts so far. let's cancel it.
+                        logger.warn("Partition %s failed 5 attempts. Cancelling file to reject."%( partition ))
+                        del self.reducerjobs[ partition ]
+                        kill_list.append( partition )
+                        self.rejectedjobs[ partition ] = reducerjob
+
+            for partition in kill_list:
+                del self.allocatedjobs[partition]
+
+        # Now also check if there are jobs that can be started
+        if len(self.reducerjobs) > 0:
+            numnodes, new_allocations = self.planner.distribute_jobs_over_nodes( self.reducerjobs, self.allocatedjobs, self.nodes, self.parallellism )
+            if numnodes > 0:
+                logger.info( "%d new tasks distributed over %d nodes"%( len(new_allocations), numnodes ))
+                self.outbound_work( new_allocations )
+                self.allocatedjobs.update( new_allocations )
+
+        if len(self.reducerjobs) == 0 and len(self.allocatedjobs) == 0:
+            # finished mappers
+            self.phase = "finish"
+            self.job_in_progress = False
 
     def refresh_nodes( self, priority ):
         self.nodes = {}
