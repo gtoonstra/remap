@@ -36,8 +36,6 @@ class AppsView(FlaskView):
     def index(self):
         return Response(json.dumps( monitor.list_apps() ),  mimetype='application/json')
 
-# nanocat --pub --connect-local 8686 --delay 1 --data 'local.jobstart.jobid {"priority":5,"appdir":"/remote/job/jobid/app","cores":[{"jobid":"jobid","appmodule":"wordcount","appconfig":"/remote/job/jobid/app/appconfig.json","type":"mapper","inputfile":"/remote/data/tomsawyer.txt","outputdir":"/remote/job/jobid/part"}]}'
-
 class JobsView(FlaskView):
     def index(self):
         return Response(json.dumps( monitor.list_jobs() ),  mimetype='application/json')
@@ -49,8 +47,8 @@ class JobsView(FlaskView):
         app = json_data["app"]
         inputdir = json_data["inputdir"]
         outputdir = json_data["outputdir"]
-
-        results = monitor.start_job( app, priority, inputdir, outputdir )
+        parallellism = json_data["parallellism"]
+        results = monitor.start_job( app, priority, inputdir, outputdir, parallellism )
 
         return Response(json.dumps(results),  mimetype='application/json')
 

@@ -3,8 +3,10 @@ import os
 import nanomsg as nn
 import logging
 import time
+import shutil
 from monitor import Monitor
 from threading import Timer
+from planner import JobPlanner
 
 parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent)
@@ -33,6 +35,9 @@ class Initiator( Monitor ):
         self.jobid = remap_utils.unique_id()
         self.priority = 0
         self.refreshed = time.time()
+        self.job_in_progress = False
+        self.rejectedjobs = {}
+        self.completedjobs = {}
 
     def apply_timeouts( self ):
         if self.bsub != None:
@@ -69,6 +74,7 @@ class Initiator( Monitor ):
         self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "local")
         self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "notlocal")
         self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.jobid)
+        self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "tracker")
         self.apply_timeouts()
 
         self.bpub = nn.Socket( nn.PUB )
@@ -93,7 +99,6 @@ class Initiator( Monitor ):
             msg = self.bsub.recv()
             if msg != None and len(msg)>0:
                 msgprefix, data = remap_utils.unpack_msg( msg )
-                logger.info("Received %s"%(msgprefix))
                 recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
                 if msgtype == "complete":
                     self.update_corecomplete( recipientid, senderid, data )
@@ -108,24 +113,34 @@ class Initiator( Monitor ):
             return False
 
     def update_corestatus( self, recipientid, senderid, data ):
-        if recipientid == self.jobid:
-            if senderid in self.cores:
-                self.cores[ senderid ][ "status" ] = data
+        if data["type"] == "mapper":
+            inputfile = data["inputfile"]
+            if inputfile in self.allocatedjobs:
+                job = self.allocatedjobs[ inputfile ]
+                job["ts_finish"] = time.time() + 7
 
     def update_corecomplete( self, recipientid, senderid, data ):
-        if recipientid == self.jobid:
-            if senderid in self.cores:
-                self.cores[ senderid ][ "complete" ] = True
+        if data["type"] == "mapper":
+            inputfile = data["inputfile"]
+            logger.info( "Job %s completed."%( inputfile ) )
+            if inputfile in self.allocatedjobs:
+                job = self.allocatedjobs[ inputfile ]
+                if job["jobdata"]["inputfile"] == inputfile:
+                    mapperjob = self.mapperjobs[ inputfile ]
+                    self.completedjobs[ inputfile ] = mapperjob
+                    del self.mapperjobs[ inputfile ]
+                    del self.allocatedjobs[ inputfile ]
+                    logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.mapperjobs), len(self.allocatedjobs), len(self.completedjobs), len(self.rejectedjobs) ))
 
     def update_hands( self, recipientid, senderid, data ):
-        if recipientid == self.jobid:
-            if senderid in self.nodes:
-                self.nodes[ senderid ]["hands"] = data
-            else:
-                self.nodes[ senderid ] = {}
-                self.nodes[ senderid ]["hands"] = data
+        # "%s.raisehand.%s"%( senderid, self.nodeid ), {"cores":3,"interruptable":0}
+        if senderid in self.nodes:
+            self.nodes[ senderid ]["avail"] = data
+        else:
+            self.nodes[ senderid ] = {}
+            self.nodes[ senderid ]["avail"] = data
 
-    def start_job( self, appname, priority, inputdir, outputdir ):
+    def start_job( self, appname, priority, inputdir, outputdir, parallellism ):
         if self.jobid != None:
             # unsubscribe from old.
             self.bsub.set_string_option( nn.SUB, nn.SUB_UNSUBSCRIBE, self.jobid)
@@ -134,11 +149,11 @@ class Initiator( Monitor ):
         self.jobid = remap_utils.unique_id()
         self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.jobid)
 
-        print(inputdir, self.datadir, self.rootdir)
-
         if appname not in self.list_apps():
             raise RemapException("No such application: %s"%(appname))
 
+        self.appname = appname
+        self.parallellism = parallellism
         self.inputdir = os.path.join( self.datadir, inputdir.strip("/") )
         self.outputdir = os.path.join( self.datadir, outputdir.strip("/") )
 
@@ -147,28 +162,111 @@ class Initiator( Monitor ):
         if os.path.isdir( self.outputdir ):
             raise RemapException("Output dir already exists: %s"%(self.outputdir))
 
+        self.relinputdir = inputdir
+        self.reloutputdir = outputdir
+
         if priority != self.priority or ((time.time() - self.refreshed) > 60):
             # Not same priority or refreshed > 60s
             self.refresh_nodes( self.priority )
             # Wait for the network to be refreshed, so we work with latest data
-            r = Timer(5.0, self.resume_job_start, ( appname, inputdir, outputdir ))
+            r = Timer(1.0, self.resume_job_start, ())
+            r.start()
         else:
-            self.resume_job_start( appname, inputdir, outputdir )
+            self.resume_job_start()
 
-    def resume_job_start( self, appname, inputdir, outputdir ):
-        self.app_dir = os.path.join( self.appsdir, appname )
-        self.app_job_dir = os.path.join( self.jobsdir, "app", appname )
-        self.job_dir = os.path.join( self.jobsdir, jobid )
+        return "OK"
+
+    def resume_job_start( self ):
+        logger.info("Starting a job: %s"%( self.appname ))
+
+        self.app_dir = os.path.join( self.appsdir, self.appname )
+        self.job_dir = os.path.join( self.jobsdir, self.jobid )
+        self.app_job_dir = os.path.join( self.job_dir, "app", self.appname )
         self.partitions_dir = os.path.join( self.job_dir, "part" )
-        self.config_file = os.path.join( self.app_dir, "appconfig.json" )
+        self.config_file = os.path.join( self.app_job_dir, "appconfig.json" )
+        self.relconfig_file = os.path.join( self.appname, "appconfig.json" )
 
         os.makedirs( self.job_dir )
-        os.makedirs( self.app_job_dir )
+        # app job dir created by copytree
+        # os.makedirs( self.app_job_dir )
         os.makedirs( self.partitions_dir )
         
+        try:
+            shutil.copytree(self.app_dir, self.app_job_dir)
+            # Directories are the same
+        except shutil.Error as e:
+            raise RemapException("Directory not copied: %s"%(e))
+        except OSError as e:
+            raise RemapException("Directory not copied: %s"%(e))
+
+        self.planner = JobPlanner( self.jobid, self.appname, self.config_file, self.relconfig_file, self.inputdir, self.relinputdir, self.outputdir, self.reloutputdir )
+        self.mapperjobs = self.planner.define_mapper_jobs( self.priority )
+        logger.info( "Found %d mapper jobs to execute"%( len(self.mapperjobs) ))
+
+        self.allocatedjobs = self.planner.distribute_jobs_over_nodes( self.mapperjobs, self.nodes, self.parallellism )
+        if len(self.allocatedjobs) == 0:
+            logger.error("No nodes found to distribute the tasks.")
+            self.job_in_progress = False
+            return
+
+        logger.info( "Tasks distributed over %d nodes"%( len(self.allocatedjobs) ))
+        self.job_in_progress = True
+        self.outbound_work( self.allocatedjobs )
+
+    def outbound_work( self, jobs ):
+        nodes = {}
+        for inputfile, job in jobs.items():
+            nodeid = job["nodeid"]
+            if nodeid in nodes:
+                nodes[ nodeid ]["cores"].append( job["jobdata"] )
+            else:
+                tasks = {}
+                tasks["priority"] = self.priority
+                tasklist = []
+                job["ts_start"] = time.time()
+                job["ts_finish"] = time.time() + 7
+                tasklist.append( job["jobdata"] )
+                tasks["cores"] = tasklist
+                nodes[ nodeid ] = tasks
+
+        for nodeid, tasks in nodes.items():
+            msg = remap_utils.pack_msg( "%s.jobstart.%s"%(nodeid,self.jobid), tasks )
+            self.forward_to_broker( msg )
+
+    def check_progress( self ):
+        # corejobs are jobs in progress that actually run
+        # mapperjobs are jobs to be done
+        # In progress we simply check 
+        newtime = time.time()
+        for inputfile, job in self.allocatedjobs.items():
+            kill_list = []
+            if newtime > job["ts_finish"]:
+                # This job hasn't been updated, probably dead.
+                jobdata = job["jobdata"]
+                if jobdata["type"] == "mapper":
+                    # this is a mapper job. Update mapperjobs with an attempt + 1
+                    mapperjob = self.mapperjobs[ inputfile ]
+                    mapperjob["attempts" ] = mapperjob["attempts" ] + 1
+                    nodeid = job["nodeid"]
+                    logger.info( "Input file %s failed on node %s. Reattempting elsewhere"%( inputfile, nodeid ))
+                    if mapperjob["attempts" ] > 4:
+                        # 5 attempts so far. let's cancel it.
+                        logger.warn("Input file %s failed 5 attempts. Cancelling file to reject."%( inputfile ))
+                        del self.mapperjobs[ inputfile ]
+                        kill_list.append( inputfile )
+                        self.rejectedjobs[ inputfile ] = mapperjob
+
+            for inputfile in kill_list:
+                del self.corejobs[inputfile]
+
+        # Now also check if there are jobs that can be started
+        if len(self.mapperjobs) > 0:
+            new_allocations = self.planner.distribute_jobs_over_nodes( self.mapperjobs, self.nodes, self.parallellism )
+            self.outbound_work( new_allocations )
+            self.allocatedjobs.update( new_allocations )
+
+        return newtime
         
-
-
     def refresh_nodes( self, priority ):
         self.nodes = {}
         self.priority = priority
@@ -193,6 +291,8 @@ if __name__ == "__main__":
 
     logger.info("Initiator started")
 
+    last_check = time.time()
+
     while( True ):
         try:
             while (initiator.process_broker_messages()):
@@ -201,4 +301,9 @@ if __name__ == "__main__":
                 initiator.setup_broker()
         except RemapException as re:
             logger.exception( re )
+
+        if initiator.job_in_progress:
+            if (time.time() - last_check) > 4:
+                # Every 5 secs
+                last_check = initiator.check_progress()
 

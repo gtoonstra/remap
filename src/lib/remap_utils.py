@@ -32,6 +32,9 @@ def node_id():
 def core_id( nodeid, pid ):
     return "%s_%d"%( nodeid, pid )
 
+def extract_node_id( coreid ):
+    return coreid.split("_")[0]
+
 def safe_get( data, key ):
     if key not in data:
         raise RemapException("Required key %s not found in data."%( key ))

@@ -7,7 +7,7 @@ mkdir REMAP_ROOT/data/wordcount/
 # (mapper-id is always different)
 rm -rf REMAP_ROOT/job/jobid/part/*
 
-nanocat --pub --connect-local 8686 --delay 1 --data 'local.jobstart.jobid {"priority":5,"appdir":"REMAP_ROOT/app/wordcount","cores":[{"jobid":"jobid","appmodule":"wordcount","appconfig":"REMAP_ROOT/app/wordcount/appconfig.json","type":"mapper","inputfile":"REMAP_ROOT/data/tomsawyer.txt","outputdir":"REMAP_ROOT/job/jobid/part"}]}'
+nanocat --pub --connect-local 8686 --delay 1 --data 'local.jobstart.jobid {"priority":5,"appdir":"REMAP_ROOT/app/wordcount","cores":[{"jobid":"jobid","appmodule":"wordcount","appconfig":"REMAP_ROOT/app/wordcount/appconfig.json","type":"mapper","inputfile":"REMAP_ROOT/data/gutenberg/tomsawyer.txt","outputdir":"REMAP_ROOT/job/jobid/part"}]}'
 
 sleep 5
 

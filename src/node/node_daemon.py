@@ -33,7 +33,8 @@ logging.basicConfig( level=logging.INFO )
 logger = logging.getLogger("NodeDaemon")
 
 class NodeDaemon( object ):
-    def __init__(self):
+    def __init__(self, remaproot):
+        self.remaproot = remaproot
         self.cores = {}
         self.broker_address = "unknown"
         self.brokerChanged = False
@@ -44,6 +45,7 @@ class NodeDaemon( object ):
         self.nodeid = remap_utils.node_id()
         self.bonjour = BonjourResolver( "_remap._tcp", self.cb_broker_changed )
         self.bonjour.start()
+        self.coresChanged = False
 
     # Create a bi-directional communication channel, where the node daemon 
     # 'shouts' in the room even to contact a single core, but the core only
@@ -118,6 +120,7 @@ class NodeDaemon( object ):
                     logger.info("Core %s completed the job"%( senderid ))
                     self.forward_to_broker( msg )
                     del self.cores[ senderid ]
+                    self.coresChanged = True
             else:
                 # forward to broker instead
                 self.forward_to_broker( msg )             
@@ -206,6 +209,11 @@ class NodeDaemon( object ):
         for key in kill_list:                
             del self.cores[ key ]
 
+    def maybe_send_status( self ):
+        if self.coresChanged:
+            self.handle_showhands( "tracker", "unknown", { "priority":0 } )
+            self.coresChanged = False
+
     # Request re-registration of existing core processes currently on the bus
     # allows failover restart of this node daemon.
     def req_registration( self ):
@@ -215,10 +223,9 @@ class NodeDaemon( object ):
     # Some app initiator requests processing capacity
     def handle_showhands( self, recipientid, senderid, data ):
         avail, interruptable = self.hw.available_cpus( remap_utils.safe_get( data, "priority" ), self.cores )
-        logger.info( "Evaluating app request: %s"%( senderid ) )
         if avail > 0 or interruptable > 0:
             logger.info( "Volunteering with %d cores, %d interruptable"%( avail, interruptable ))
-            msg = remap_utils.pack_msg( "%s.raisehand.%s"%( senderid, self.nodeid ), {"cores":avail,"interruptable":interruptable} ) 
+            msg = remap_utils.pack_msg( "tracker.raisehand.%s"%( self.nodeid ), {"free":avail,"interruptable":interruptable} ) 
             self.forward_to_broker( msg )
 
     # Some app initiator wants this node to start work
@@ -227,18 +234,25 @@ class NodeDaemon( object ):
         numcores = len(remap_utils.safe_get( data, "cores" ))
         if (avail + interruptable) >= numcores:
             logger.info("Starting job with %d cores"%( numcores ))
-            self.hw.start_job( senderid, numcores, data )
+            if not self.hw.start_job( self.remaproot, senderid, numcores, data ):
+                logger.error("Error starting job")
         else:
             # Something changed in the meantime. Reject
             logger.info( "Initiator requested %d cores, %d can be committed. Rejecting"%( numcores, avail + interruptable ))
             msg = remap_utils.pack_msg( "%s.rejectjob.%s"%( senderid, self.nodeid ), {} ) 
             self.forward_to_broker( msg )
 
+        self.coresChanged = True
+
 if __name__ == "__main__":
     logger.info("Starting node daemon")
     health_check = time.time()
 
-    node = NodeDaemon()
+    if ( len(sys.argv) < 2 ):
+        print("Must supply one argument, the 'rootdir'")
+        sys.exit(-1)
+
+    node = NodeDaemon( sys.argv[1] )
     node.setup_bus()
     node.apply_timeouts()
 
@@ -267,4 +281,4 @@ if __name__ == "__main__":
         if (new_ts - health_check) > remap_constants.HEALTH_CHECK_DELAY:
             health_check = new_ts            
             node.purge_inactive_cores( new_ts )
-
+            node.maybe_send_status()

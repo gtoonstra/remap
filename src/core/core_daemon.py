@@ -29,7 +29,8 @@ logging.basicConfig( level=logging.INFO )
 logger = logging.getLogger("CoreDaemon")
 
 class CoreDaemon( object ):
-    def __init__(self):
+    def __init__(self, remaproot):
+        self.remaproot = remaproot
         self.pid = os.getpid()
         self.coreid = "unknown"
         self.sub = None
@@ -121,8 +122,7 @@ class CoreDaemon( object ):
 
     def process_personal_message( self, msgtype, sender, data ):
         if msgtype == "_work":
-            # b'88750194067218_4516._work.88750194067218 {"inputfile": "/remote/data/tomsawyer.txt", "type": "mapper", "appconfig": "/remote/app/wordcount/appconfig.json", 
-            # "outputdir": "/remote/im/jobid", "appmodule": "wordcount"}'
+            # {"appmodule": "wordcount", "appconfig": "wordcount/appconfig.json", "priority": 0, "inputfile": "gutenberg/picture-dorian-gray.txt", "type": "mapper", "jobid": "74d74370-1cca-11e5-afab-90e6ba78077a"}
             #
             # Data is the work to be executed
             # Prepare to start that work
@@ -131,28 +131,41 @@ class CoreDaemon( object ):
             self.work = data
             self.jobid = self.work["jobid"]
             self.workertype = self.work["type"]
-            self.appname = self.work["appmodule"]
-            self.app = __import__(self.appname, fromlist = ["*"])
+            self.appdir = self.work["appdir"]
+
             try:
-                ap = open( self.work["appconfig"], 'r' )
+                configfile = os.path.join( self.remaproot, "job", self.jobid, "app", self.work["appconfig"] )
+                ap = open( configfile, 'r' )
                 contents = ap.read()
                 self.appconfig = json.loads( contents )
             except IOError as ioe:
-                raise AppException( "App config not found" ) from ioe
+                raise RemapException( "App config not found" ) from ioe
+
+            if "module" not in self.appconfig:
+                raise RemapException( "App config missing 'module' specification." )
+
+            modulename = self.appconfig["module"]
+            self.app = __import__(modulename, fromlist = ["*"])
 
             if self.workertype == 'mapper':
                 # This is a mapper operation
-                self.input = self.app.create_mapper_reader( self.work["inputfile"] )
-                self.outputdir = self.work["outputdir"]
+                inputfile = os.path.join( self.remaproot, "data", self.work["inputfile"] )
+                outputdir = os.path.join( self.remaproot, "job", self.jobid, "part" )
+
+                self.input = self.app.create_mapper_reader( inputfile )
+                self.outputdir = outputdir
                 self.partitions = {}
             else:
                 # This is a reducer operation
-                self.reducerfiles = sorted(os.listdir( self.work["inputdir"] ))
-                self.inputdir = self.work["inputdir"]
+                inputdir = os.path.join( self.remaproot, "job", self.jobid, "part", self.work["partition"] )
+                outputdir = os.path.join( self.remaproot, self.work["outputdir"] )
+
+                self.reducerfiles = sorted(os.listdir( inputdir ))
+                self.inputdir = inputdir
                 self.numparts = len(self.reducerfiles)
                 self.fraction = 100.0 / self.numparts
                 self.completedparts = 0
-                self.outputdir = self.work["outputdir"]
+                self.outputdir = outputdir
                 self.partition = self.work["partition"]
                 self.reducerWriter = self.app.create_reducer_writer( self.outputdir, self.partition )
 
@@ -183,15 +196,18 @@ class CoreDaemon( object ):
 
     def send_status( self ):
         if self.work != None:
-            self.pub.send( remap_utils.pack_msg( "%s.corestatus.%s"%(self.jobid, self.coreid), {"progress":self.progress} ) )
+            if self.workertype == "mapper":
+                self.pub.send( remap_utils.pack_msg( "%s.corestatus.%s"%(self.jobid, self.coreid), {"type":self.workertype,"inputfile":self.work["inputfile"],"progress":self.progress} ) )
+            else:
+                self.pub.send( remap_utils.pack_msg( "%s.corestatus.%s"%(self.jobid, self.coreid), {"type":self.workertype,"progress":self.progress} ) )
 
     def do_more_work( self ):
         # Check if we have some work to do already
         if self.work != None:
             if self.workertype == "mapper":
-                self.mapper_work()
+                return self.mapper_work()
             else:
-                self.reducer_work()
+                return self.reducer_work()
         else:
             # No work yet, so let's request some and otherwise wait 5 seconds until
             # we go away.
@@ -200,42 +216,44 @@ class CoreDaemon( object ):
                     # prevent loop with 100% cpu utilization
                     # wait at most 5 seconds for work to drop in.
                     time.sleep(0.1)
-                    return
+                    return True
                 else:
-                    self.keepWorking = False
-                    return
+                    return False
 
             logger.info( "Grabbing work item from node" )
             self.ts_workRequested = time.time()
             self.pub.send( remap_utils.pack_msg( "node._todo.%s"%(self.coreid), {} ) )
+        return True
 
     # The work to be done as a mapper
     def mapper_work( self ):
-        if self.input.isComplete():
-            self.pub.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"inputfile":self.work["inputfile"]} ) )
-            # allow time for message to be sent
-            time.sleep( 0.5 )
-            self.keepWorking = False
-            return
+        if self.input != None:
+            if self.input.isComplete():
+                self.pub.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"inputfile":self.work["inputfile"],"type":"mapper"} ) )
+                # allow time for message to be sent
+                time.sleep( 0.5 )
+                self.keepWorking = False
+                return True
 
-        # so, do some work
-        for k1, v1 in self.input.read():
-            for part, k2, v2 in self.app.map( k1, v1 ):
-                if part not in self.partitions:
-                    self.partitions[ part ] = self.app.create_mapper_partitioner( self.outputdir, part, self.coreid )
-                self.partitions[ part ].store( k2, v2 )
+            # so, do some work
+            for k1, v1 in self.input.read():
+                for part, k2, v2 in self.app.map( k1, v1 ):
+                    if part not in self.partitions:
+                        self.partitions[ part ] = self.app.create_mapper_partitioner( self.outputdir, part, self.coreid )
+                    self.partitions[ part ].store( k2, v2 )
 
-            p = self.input.progress()
-            if p > self.progress+1:
-                self.progress = int(p)
-                break
+                p = self.input.progress()
+                if p > self.progress+5:
+                    self.progress = int(p)
+                    break
 
-        if self.input.isComplete():
-            self.progress = 100
-            self.input.close()
-            for part in self.partitions:
-                self.partitions[part].sort_flush_close()
-        self.send_status()
+            if self.input.isComplete():
+                self.progress = 100
+                self.input.close()
+                for part in self.partitions:
+                    self.partitions[part].sort_flush_close()
+            self.send_status()
+        return True
 
     # The work to be done as a reducer
     def reducer_work( self ):
@@ -267,7 +285,7 @@ class CoreDaemon( object ):
                 self.processed = self.processed + recsize
 
             p = (self.processed / self.total_size) * 100
-            if p > self.progress+1:
+            if p > self.progress+5:
                 self.progress = int(p)
                 # breaking out of the loop to check up on messages
                 break
@@ -281,6 +299,7 @@ class CoreDaemon( object ):
             self.reducerWriter.close()
 
         self.send_status()
+        return True
 
     def shutdown( self ):
         self.sub.close()
@@ -289,7 +308,7 @@ class CoreDaemon( object ):
 if __name__ == "__main__":
 
     # Initialization of the core. We need a core id to work with (from node).
-    core = CoreDaemon()
+    core = CoreDaemon( sys.argv[1] )
     core.setup_node()
 
     # wait 50ms for node comms to be established
@@ -322,7 +341,9 @@ if __name__ == "__main__":
             logger.exception( re )
 
         try:
-            core.do_more_work()
+            if not core.do_more_work():
+                logger.error("The core failed to process work")
+                core.keepWorking = False
         except RemapException as re:
             logger.exception( re )
             # take other actions
