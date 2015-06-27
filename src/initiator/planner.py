@@ -46,6 +46,7 @@ class JobPlanner(object):
 
 # nanocat --pub --connect-local 8686 --delay 1 --data 'local.jobstart.jobid {"priority":5,"appdir":"/remote/job/jobid/app","cores":[{"jobid":"jobid","appmodule":"wordcount","appconfig":"wordcount/appconfig.json","type":"reducer","outputdir":"wordscounted","partition":"_default"}]}'
 
+        ctr = 0
         # ( Here app config probably tells us how to split files. Not doing that for now. Just process whole thing )
         for f in files:
             inputfile = os.path.join( self.relinputdir, f )
@@ -55,7 +56,9 @@ class JobPlanner(object):
             job["appdir"] = self.app
             job["appconfig"] = self.appconfig
             job["type"] = "mapper"
+            job["workid"] = "%05d"%( ctr )
             mapperjobs[ inputfile ] = { "attempts": 0, "job": job }
+            ctr = ctr + 1
 
         # Can't do anything for reducers yet, because this depends on number of partitions and mappers have
         # to finish anyway prior to running reducers
@@ -85,6 +88,7 @@ class JobPlanner(object):
             job["appconfig"] = self.appconfig
             job["type"] = "reducer"
             job["outputdir"] = self.reloutputdir
+            job["workid"] = d
             reducerjobs[ d ] = { "attempts": 0, "job": job }
 
         # Can't do anything for reducers yet, because this depends on number of partitions and mappers have

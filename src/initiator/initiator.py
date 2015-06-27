@@ -174,12 +174,9 @@ class Initiator( Monitor ):
         self.appname = appname
         self.parallellism = parallellism
         self.inputdir = os.path.join( self.datadir, inputdir.strip("/") )
-        self.outputdir = os.path.join( self.datadir, outputdir.strip("/") )
 
         if not os.path.isdir( self.inputdir ):
             raise RemapException("Input dir does not exist: %s"%(self.inputdir))
-        if os.path.isdir( self.outputdir ):
-            raise RemapException("Output dir already exists: %s"%(self.outputdir))
 
         self.relinputdir = inputdir
         self.reloutputdir = outputdir
@@ -218,7 +215,7 @@ class Initiator( Monitor ):
         except OSError as e:
             raise RemapException("Directory not copied: %s"%(e))
 
-        self.planner = JobPlanner( self.jobid, self.appname, self.config_file, self.relconfig_file, self.inputdir, self.relinputdir, self.outputdir, self.reloutputdir )
+        self.planner = JobPlanner( self.jobid, self.appname, self.config_file, self.relconfig_file, self.inputdir, self.relinputdir, None, None )
         self.mapperjobs = self.planner.define_mapper_jobs( self.priority )
         logger.info( "Found %d mapper jobs to execute"%( len(self.mapperjobs) ))
 
@@ -369,7 +366,6 @@ class Initiator( Monitor ):
 
         if len(self.mapperjobs) == 0 and len(self.allocatedjobs) == 0:
             # finished mappers
-            self.phase = "reducer"
             self.job_in_progress = False
             logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.mapperjobs), len(self.allocatedjobs), len(self.completedjobs), len(self.rejectedjobs) ))
 

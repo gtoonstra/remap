@@ -46,9 +46,8 @@ class JobsView(FlaskView):
         priority = json_data["priority"]
         app = json_data["app"]
         inputdir = json_data["inputdir"]
-        outputdir = json_data["outputdir"]
         parallellism = json_data["parallellism"]
-        results = monitor.start_mapper_job( app, priority, inputdir, outputdir, parallellism )
+        results = monitor.start_mapper_job( app, priority, inputdir, None, parallellism )
 
         return Response(json.dumps(results),  mimetype='application/json')
 
