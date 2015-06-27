@@ -4,6 +4,7 @@ import nanomsg as nn
 import logging
 import time
 from monitor import Monitor
+from threading import Timer
 
 parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent)
@@ -31,6 +32,7 @@ class Initiator( Monitor ):
         self.bonjour.start()
         self.jobid = remap_utils.unique_id()
         self.priority = 0
+        self.refreshed = time.time()
 
     def apply_timeouts( self ):
         if self.bsub != None:
@@ -123,8 +125,7 @@ class Initiator( Monitor ):
                 self.nodes[ senderid ] = {}
                 self.nodes[ senderid ]["hands"] = data
 
-
-    def start_new_job( self, appname ):
+    def start_job( self, appname, priority, inputdir, outputdir ):
         if self.jobid != None:
             # unsubscribe from old.
             self.bsub.set_string_option( nn.SUB, nn.SUB_UNSUBSCRIBE, self.jobid)
@@ -133,7 +134,45 @@ class Initiator( Monitor ):
         self.jobid = remap_utils.unique_id()
         self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.jobid)
 
-    def refresh_nodes( self ):
+        print(inputdir, self.datadir, self.rootdir)
+
+        if appname not in self.list_apps():
+            raise RemapException("No such application: %s"%(appname))
+
+        self.inputdir = os.path.join( self.datadir, inputdir.strip("/") )
+        self.outputdir = os.path.join( self.datadir, outputdir.strip("/") )
+
+        if not os.path.isdir( self.inputdir ):
+            raise RemapException("Input dir does not exist: %s"%(self.inputdir))
+        if os.path.isdir( self.outputdir ):
+            raise RemapException("Output dir already exists: %s"%(self.outputdir))
+
+        if priority != self.priority or ((time.time() - self.refreshed) > 60):
+            # Not same priority or refreshed > 60s
+            self.refresh_nodes( self.priority )
+            # Wait for the network to be refreshed, so we work with latest data
+            r = Timer(5.0, self.resume_job_start, ( appname, inputdir, outputdir ))
+        else:
+            self.resume_job_start( appname, inputdir, outputdir )
+
+    def resume_job_start( self, appname, inputdir, outputdir ):
+        self.app_dir = os.path.join( self.appsdir, appname )
+        self.app_job_dir = os.path.join( self.jobsdir, "app", appname )
+        self.job_dir = os.path.join( self.jobsdir, jobid )
+        self.partitions_dir = os.path.join( self.job_dir, "part" )
+        self.config_file = os.path.join( self.app_dir, "appconfig.json" )
+
+        os.makedirs( self.job_dir )
+        os.makedirs( self.app_job_dir )
+        os.makedirs( self.partitions_dir )
+        
+        
+
+
+    def refresh_nodes( self, priority ):
+        self.nodes = {}
+        self.priority = priority
+        self.refreshed = time.time()
         msg = remap_utils.pack_msg( "local.showhands.%s"%(self.jobid), {"priority":self.priority} )
         self.forward_to_broker( msg )
 

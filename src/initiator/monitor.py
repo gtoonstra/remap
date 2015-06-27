@@ -18,23 +18,24 @@ logger = logging.getLogger("Initiator")
 class Monitor(object):
     def __init__(self, rootdir):
         self.rootdir = os.path.abspath( rootdir )
-        self.appdir = os.path.join( self.rootdir, "app" )
-        self.jobdir = os.path.join( self.rootdir, "job" )
+        self.appsdir = os.path.join( self.rootdir, "app" )
+        self.jobsdir = os.path.join( self.rootdir, "job" )
+        self.datadir = os.path.join( self.rootdir, "data" )
         self.nodes = {}
         self.cores = {}
         self.inputfiles = {}
 
     def list_apps( self ):
         apps = []
-        for root, dirs, files in os.walk( self.appdir ):
+        for root, dirs, files in os.walk( self.appsdir ):
             for f in files:
                 if f == "appconfig.json":
-                    apps.append( os.path.relpath(root, self.appdir) )
+                    apps.append( os.path.relpath(root, self.appsdir) )
         return apps
 
     def list_jobs( self ):
         jobs = []
-        for root in os.listdir( self.jobdir ):
+        for root in os.listdir( self.jobsdir ):
             jobs.append( root )
         return jobs
 
