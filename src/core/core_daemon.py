@@ -158,7 +158,7 @@ class CoreDaemon( object ):
             else:
                 # This is a reducer operation
                 inputdir = os.path.join( self.remaproot, "job", self.jobid, "part", self.work["partition"] )
-                outputdir = os.path.join( self.remaproot, self.work["outputdir"] )
+                outputdir = os.path.join( self.remaproot, "data", self.work["outputdir"] )
 
                 self.reducerfiles = sorted(os.listdir( inputdir ))
                 self.inputdir = inputdir
@@ -258,11 +258,11 @@ class CoreDaemon( object ):
     # The work to be done as a reducer
     def reducer_work( self ):
         if len(self.sources) == 0:
-            self.pub.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"inputdir":self.work["inputdir"]} ) )
+            self.pub.send( remap_utils.pack_msg( "%s.complete.%s"%(self.jobid, self.coreid), {"partition":self.partition} ) )
             # allow time for message to be sent
             time.sleep( 0.5 )
             self.keepWorking = False
-            return
+            return True
 
         readrec = False
         for k2,v2,recsize in self.merged:

@@ -61,11 +61,48 @@ class JobPlanner(object):
         # to finish anyway prior to running reducers
         return mapperjobs
 
-    def distribute_jobs_over_nodes( self, mapperjobs, nodes, parallellism ):
+    def define_reducer_jobs( self, priority ):
+        # First, let's just generate a list of jobs
+        reducerjobs = {}
+
+        parts_dir = os.path.join( self.inputdir, "job", self.jobid, "part" )
+
+        # Grab all input files
+        dirs = [d for d in os.listdir( parts_dir ) if os.path.isdir(os.path.join(parts_dir,d))]
+        logger.info("Found %d partitions to process in %s"%( len(dirs), parts_dir ))
+
+# nanocat --pub --connect-local 8686 --delay 1 --data 'local.jobstart.jobid {"priority":5,"cores":[{"jobid":"jobid","appmodule":"wordcount","appconfig":"wordcount/appconfig.json","type":"mapper","inputfile":"gutenberg/tomsawyer.txt"}]}'
+
+# nanocat --pub --connect-local 8686 --delay 1 --data 'local.jobstart.jobid {"priority":5,"appdir":"/remote/job/jobid/app","cores":[{"jobid":"jobid","appmodule":"wordcount","appconfig":"wordcount/appconfig.json","type":"reducer","outputdir":"wordscounted","partition":"_default"}]}'
+
+        # ( Here app config probably tells us how to split files. Not doing that for now. Just process whole thing )
+        for d in dirs:
+            job = {}
+            job["jobid"] = self.jobid
+            job["partition"] = d
+            job["priority"] = priority
+            job["appdir"] = self.app
+            job["appconfig"] = self.appconfig
+            job["type"] = "reducer"
+            job["outputdir"] = self.reloutputdir
+            reducerjobs[ d ] = { "attempts": 0, "job": job }
+
+        # Can't do anything for reducers yet, because this depends on number of partitions and mappers have
+        # to finish anyway prior to running reducers
+        return reducerjobs
+
+    def distribute_jobs_over_nodes( self, availjobs, allocatedjobs, nodes, parallellism ):
         # Making a copy first, it gets modified
-        mapperjobs = dict(mapperjobs)
+        availjobs = dict(availjobs)
         corejobs = {}
         committed = {}
+
+        for inputfile, job in allocatedjobs.items():
+            nodeid = job["nodeid"]
+            if nodeid in committed:
+                committed[ nodeid ] = committed[ nodeid ]+1
+            else:
+                committed[ nodeid ] = 1                
 
         # Figure out how to distribute mappers.
         numcores = 0
@@ -77,7 +114,7 @@ class JobPlanner(object):
         parallels = min( numcores, parallellism )
 
         added = True
-        while len(mapperjobs) > 0 and added:
+        while len(availjobs) > 0 and added:
             i = 0
             added = False
             for key in nodes:
@@ -89,7 +126,7 @@ class JobPlanner(object):
                     break
                 if i == parallels:
                     break
-                if len(mapperjobs)==0:
+                if len(availjobs)==0:
                     break
 
                 for j in range( 0, avail ):
@@ -97,8 +134,8 @@ class JobPlanner(object):
                        break
                     i = i + 1
 
-                    if len(mapperjobs)>0:
-                        workfile, data = mapperjobs.popitem()
+                    if len(availjobs)>0:
+                        workfile, data = availjobs.popitem()
                         corejobs[ workfile ] = {}
                         corejobs[ workfile ]["jobdata"] = data["job"]
                         corejobs[ workfile ]["nodeid"] = key
@@ -109,5 +146,5 @@ class JobPlanner(object):
                     else:
                         break
 
-        return corejobs
+        return len(committed), corejobs
 

@@ -11,9 +11,7 @@ import lib.remap_constants as remap_constants
 from lib.remap_utils import RemapException
 
 logging.basicConfig( level=logging.INFO ) 
-
-# logger = logging.getLogger(__name__)
-logger = logging.getLogger("Initiator")
+logger = logging.getLogger("Monitor")
 
 class Monitor(object):
     def __init__(self, rootdir):

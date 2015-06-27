@@ -25,6 +25,7 @@ logger = logging.getLogger("Initiator")
 class Initiator( Monitor ):
     def __init__(self, rootdir):
         Monitor.__init__(self, rootdir)
+        self.remaproot = rootdir
         self.broker_address = "unknown"
         self.brokerChanged = False
         self.bsub = None
@@ -38,6 +39,8 @@ class Initiator( Monitor ):
         self.job_in_progress = False
         self.rejectedjobs = {}
         self.completedjobs = {}
+        self.last_check = time.time()
+        self.phase = "mapper"
 
     def apply_timeouts( self ):
         if self.bsub != None:
@@ -140,7 +143,12 @@ class Initiator( Monitor ):
             self.nodes[ senderid ] = {}
             self.nodes[ senderid ]["avail"] = data
 
-    def start_job( self, appname, priority, inputdir, outputdir, parallellism ):
+    def start_mapper_job( self, appname, priority, inputdir, outputdir, parallellism ):
+        if self.job_in_progress:
+            raise RemapException("A job is currently in progress on this monitor")
+
+        self.phase = "mapper"
+
         if self.jobid != None:
             # unsubscribe from old.
             self.bsub.set_string_option( nn.SUB, nn.SUB_UNSUBSCRIBE, self.jobid)
@@ -169,15 +177,15 @@ class Initiator( Monitor ):
             # Not same priority or refreshed > 60s
             self.refresh_nodes( self.priority )
             # Wait for the network to be refreshed, so we work with latest data
-            r = Timer(1.0, self.resume_job_start, ())
+            r = Timer(1.0, self.resume_mapper_job_start, ())
             r.start()
         else:
-            self.resume_job_start()
+            self.resume_mapper_job_start()
 
         return "OK"
 
-    def resume_job_start( self ):
-        logger.info("Starting a job: %s"%( self.appname ))
+    def resume_mapper_job_start( self ):
+        logger.info("Starting a mapper job: %s"%( self.appname ))
 
         self.app_dir = os.path.join( self.appsdir, self.appname )
         self.job_dir = os.path.join( self.jobsdir, self.jobid )
@@ -203,13 +211,80 @@ class Initiator( Monitor ):
         self.mapperjobs = self.planner.define_mapper_jobs( self.priority )
         logger.info( "Found %d mapper jobs to execute"%( len(self.mapperjobs) ))
 
-        self.allocatedjobs = self.planner.distribute_jobs_over_nodes( self.mapperjobs, self.nodes, self.parallellism )
+        numnodes, self.allocatedjobs = self.planner.distribute_jobs_over_nodes( self.mapperjobs, {}, self.nodes, self.parallellism )
         if len(self.allocatedjobs) == 0:
             logger.error("No nodes found to distribute the tasks.")
             self.job_in_progress = False
             return
 
-        logger.info( "Tasks distributed over %d nodes"%( len(self.allocatedjobs) ))
+        logger.info( "%d new tasks distributed over %d nodes."%( len(self.allocatedjobs), numnodes ))
+        self.job_in_progress = True
+        self.outbound_work( self.allocatedjobs )
+
+    def start_reducer_job( self, appname, priority, jobid, outputdir, parallellism ):
+        if self.job_in_progress:
+            raise RemapException("A job is currently in progress on this monitor")
+
+        if appname not in self.list_apps():
+            raise RemapException("No such application: %s"%(appname))
+
+        self.phase = "reducer"
+
+        self.appname = appname
+        self.parallellism = parallellism
+        self.jobid = jobid
+        verifyDir = os.path.join( self.remaproot, "job", jobid )
+        self.outputdir = os.path.join( self.datadir, outputdir.strip("/") )
+
+        if not os.path.isdir( verifyDir ):
+            raise RemapException("Input dir does not exist: %s"%(verifyDir))
+        if os.path.isdir( self.outputdir ):
+            raise RemapException("Output dir already exists: %s"%(self.outputdir))
+
+        os.makedirs( self.outputdir )
+
+        self.reloutputdir = outputdir
+
+        if priority != self.priority or ((time.time() - self.refreshed) > 60):
+            # Not same priority or refreshed > 60s
+            self.refresh_nodes( self.priority )
+            # Wait for the network to be refreshed, so we work with latest data
+            r = Timer(1.0, self.resume_reducer_job_start, ())
+            r.start()
+        else:
+            self.resume_reducer_job_start()
+
+        return "OK"
+
+    def resume_reducer_job_start( self ):
+        logger.info("Starting a reducer job: %s"%( self.appname ))
+
+        self.app_dir = os.path.join( self.appsdir, self.appname )
+        self.job_dir = os.path.join( self.jobsdir, self.jobid )
+        self.app_job_dir = os.path.join( self.job_dir, "app", self.appname )
+        self.partitions_dir = os.path.join( self.job_dir, "part" )
+        self.config_file = os.path.join( self.app_job_dir, "appconfig.json" )
+        self.relconfig_file = os.path.join( self.appname, "appconfig.json" )
+       
+        try:
+            shutil.copytree(self.app_dir, self.app_job_dir)
+            # Directories are the same
+        except shutil.Error as e:
+            raise RemapException("Directory not copied: %s"%(e))
+        except OSError as e:
+            pass
+
+        self.planner = JobPlanner( self.jobid, self.appname, self.config_file, self.relconfig_file, self.remaproot, None, self.outputdir, self.reloutputdir )
+        self.reducerjobs = self.planner.define_reducer_jobs( self.priority )
+        logger.info( "Found %d reducer jobs to execute"%( len(self.reducerjobs) ))
+
+        numnodes, self.allocatedjobs = self.planner.distribute_jobs_over_nodes( self.reducerjobs, {}, self.nodes, self.parallellism )
+        if len(self.allocatedjobs) == 0:
+            logger.error("No nodes found to distribute the tasks.")
+            self.job_in_progress = False
+            return
+
+        logger.info( "%d new tasks distributed over %d nodes."%( len(self.allocatedjobs), numnodes ))
         self.job_in_progress = True
         self.outbound_work( self.allocatedjobs )
 
@@ -237,6 +312,18 @@ class Initiator( Monitor ):
         # corejobs are jobs in progress that actually run
         # mapperjobs are jobs to be done
         # In progress we simply check 
+
+        if time.time() - self.last_check <= 4:
+            return
+
+        if self.phase == "mapper":
+            self.check_progress_mapper()
+        if self.phase == "reducer":
+            self.check_progress_reducer()
+
+        self.last_check = time.time()        
+
+    def check_progress_mapper(self):
         newtime = time.time()
         for inputfile, job in self.allocatedjobs.items():
             kill_list = []
@@ -261,12 +348,20 @@ class Initiator( Monitor ):
 
         # Now also check if there are jobs that can be started
         if len(self.mapperjobs) > 0:
-            new_allocations = self.planner.distribute_jobs_over_nodes( self.mapperjobs, self.nodes, self.parallellism )
-            self.outbound_work( new_allocations )
-            self.allocatedjobs.update( new_allocations )
+            numnodes, new_allocations = self.planner.distribute_jobs_over_nodes( self.mapperjobs, self.allocatedjobs, self.nodes, self.parallellism )
+            if numnodes > 0:
+                logger.info( "%d new tasks distributed over %d nodes"%( len(new_allocations), numnodes ))
+                self.outbound_work( new_allocations )
+                self.allocatedjobs.update( new_allocations )
 
-        return newtime
-        
+        if len(self.mapperjobs) == 0 and len(self.allocatedjobs) == 0:
+            # finished mappers
+            self.phase = "reducer"
+            self.job_in_progress = False
+
+    def check_progress_reducer( self ):
+        pass
+
     def refresh_nodes( self, priority ):
         self.nodes = {}
         self.priority = priority
@@ -291,8 +386,6 @@ if __name__ == "__main__":
 
     logger.info("Initiator started")
 
-    last_check = time.time()
-
     while( True ):
         try:
             while (initiator.process_broker_messages()):
@@ -303,7 +396,5 @@ if __name__ == "__main__":
             logger.exception( re )
 
         if initiator.job_in_progress:
-            if (time.time() - last_check) > 4:
-                # Every 5 secs
-                last_check = initiator.check_progress()
+            initiator.check_progress()
 
