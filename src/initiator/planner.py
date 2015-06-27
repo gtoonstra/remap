@@ -136,6 +136,8 @@ class JobPlanner(object):
 
                     if len(availjobs)>0:
                         workfile, data = availjobs.popitem()
+                        if workfile in allocatedjobs:
+                            continue
                         corejobs[ workfile ] = {}
                         corejobs[ workfile ]["jobdata"] = data["job"]
                         corejobs[ workfile ]["nodeid"] = key

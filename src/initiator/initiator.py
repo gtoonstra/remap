@@ -338,8 +338,8 @@ class Initiator( Monitor ):
 
     def check_progress_mapper(self):
         newtime = time.time()
+        kill_list = []
         for inputfile, job in self.allocatedjobs.items():
-            kill_list = []
             if newtime > job["ts_finish"]:
                 # This job hasn't been updated, probably dead.
                 jobdata = job["jobdata"]
@@ -356,8 +356,8 @@ class Initiator( Monitor ):
                         kill_list.append( inputfile )
                         self.rejectedjobs[ inputfile ] = mapperjob
 
-            for inputfile in kill_list:
-                del self.mapperjobs[inputfile]
+        for inputfile in kill_list:
+            del self.allocatedjobs[inputfile]
 
         # Now also check if there are jobs that can be started
         if len(self.mapperjobs) > 0:
@@ -371,34 +371,36 @@ class Initiator( Monitor ):
             # finished mappers
             self.phase = "reducer"
             self.job_in_progress = False
+            logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.mapperjobs), len(self.allocatedjobs), len(self.completedjobs), len(self.rejectedjobs) ))
 
     def check_progress_reducer( self ):
         newtime = time.time()
+        kill_list = []
         for partition, job in self.allocatedjobs.items():
-            kill_list = []
             if newtime > job["ts_finish"]:
                 # This job hasn't been updated, probably dead.
                 jobdata = job["jobdata"]
                 if jobdata["type"] == "reducer":
-                    # this is a mapper job. Update mapperjobs with an attempt + 1
-                    reducerjob = self.reducerjobs[ partition ]
-                    reducerjob["attempts" ] = reducerjob["attempts" ] + 1
-                    nodeid = job["nodeid"]
-                    logger.info( "Input directory %s failed on node %s. Reattempting elsewhere"%( partition, nodeid ))
-                    if reducerjob["attempts" ] > 4:
-                        # 5 attempts so far. let's cancel it.
-                        logger.warn("Partition %s failed 5 attempts. Cancelling file to reject."%( partition ))
-                        del self.reducerjobs[ partition ]
-                        kill_list.append( partition )
-                        self.rejectedjobs[ partition ] = reducerjob
+                    # this is a reducer job. Update reducerjobs with an attempt + 1
+                    if partition in self.reducerjobs:
+                        reducerjob = self.reducerjobs[ partition ]
+                        reducerjob["attempts" ] = reducerjob["attempts" ] + 1
+                        nodeid = job["nodeid"]
+                        logger.info( "Input directory %s failed on node %s. Reattempting elsewhere"%( partition, nodeid ))
+                        if reducerjob["attempts" ] > 4:
+                            # 5 attempts so far. let's cancel it.
+                            logger.warn("Partition %s failed 5 attempts. Cancelling file to reject."%( partition ))
+                            del self.reducerjobs[ partition ]
+                            kill_list.append( partition )
+                            self.rejectedjobs[ partition ] = reducerjob
 
-            for partition in kill_list:
-                del self.allocatedjobs[partition]
+        for partition in kill_list:
+            del self.allocatedjobs[partition]
 
         # Now also check if there are jobs that can be started
         if len(self.reducerjobs) > 0:
             numnodes, new_allocations = self.planner.distribute_jobs_over_nodes( self.reducerjobs, self.allocatedjobs, self.nodes, self.parallellism )
-            if numnodes > 0:
+            if numnodes > 0 and len(new_allocations) > 0:
                 logger.info( "%d new tasks distributed over %d nodes"%( len(new_allocations), numnodes ))
                 self.outbound_work( new_allocations )
                 self.allocatedjobs.update( new_allocations )
@@ -407,6 +409,7 @@ class Initiator( Monitor ):
             # finished mappers
             self.phase = "finish"
             self.job_in_progress = False
+            logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.reducerjobs), len(self.allocatedjobs), len(self.completedjobs), len(self.rejectedjobs) ))
 
     def refresh_nodes( self, priority ):
         self.nodes = {}
