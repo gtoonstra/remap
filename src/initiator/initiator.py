@@ -46,22 +46,9 @@ class Initiator( Monitor ):
         except ImportError as ie:
             raise RemapException( "No such worker type: %s"%( name ))
 
-    def apply_timeouts( self ):
-        if self.bsub != None:
-            rcv_timeout = 100
-            self.bsub.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )
-
-    def cb_broker_changed( self, broker_address ):
-        logger.info("Received new broker address: %s"%(broker_address) )
-        self.broker_address = broker_address
-        self.brokerChanged = True
-
-    def forward_to_broker( self, msg ):
-        if self.bpub != None:
-            try:
-                self.bpub.send( msg )
-            except nn.NanoMsgAPIError as e:
-                pass
+    # -------
+    # Broker handling
+    # -------
 
     def setup_broker( self ):
         self.brokerChanged = False
@@ -88,6 +75,23 @@ class Initiator( Monitor ):
         self.bpub.connect( "tcp://%s:8686"%( self.broker_address ))
 
         logger.info("Broker setup complete")
+
+    def apply_timeouts( self ):
+        if self.bsub != None:
+            rcv_timeout = 100
+            self.bsub.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, rcv_timeout )
+
+    def cb_broker_changed( self, broker_address ):
+        logger.info("Received new broker address: %s"%(broker_address) )
+        self.broker_address = broker_address
+        self.brokerChanged = True
+
+    def forward_to_broker( self, msg ):
+        if self.bpub != None:
+            try:
+                self.bpub.send( msg )
+            except nn.NanoMsgAPIError as e:
+                pass
 
     def process_broker_messages( self ):
         if self.bsub == None:
@@ -119,6 +123,10 @@ class Initiator( Monitor ):
         except nn.NanoMsgAPIError as e:
             return False
 
+    # -------
+    # Messaging handling
+    # -------
+
     def update_corestatus( self, recipientid, senderid, data ):
         key = self.manager.get_work_key( data )
         if key in self.allocatedtasks:
@@ -143,6 +151,10 @@ class Initiator( Monitor ):
         else:
             self.nodes[ senderid ] = {}
             self.nodes[ senderid ]["avail"] = data
+
+    # -------
+    # Job management
+    # -------
 
     def start_job( self, jobdata ):
         if self.job_in_progress:
@@ -273,6 +285,9 @@ class Initiator( Monitor ):
 
         self.last_check = time.time()        
 
+    # -------
+    # Node management
+    # -------
     def refresh_nodes( self, priority ):
         self.nodes = {}
         self.priority = priority
