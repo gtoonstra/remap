@@ -9,19 +9,19 @@ sys.path.insert(0, parent)
 import lib.remap_utils as remap_utils
 import lib.remap_constants as remap_constants
 from lib.remap_utils import RemapException
+from base_module import WorkerBase
 
-def create_worker( app, appconfig, workdata, skeleton ):
-    return Mapper( app, appconfig, workdata, skeleton )
+logging.basicConfig( level=logging.INFO ) 
 
-class Mapper(object):
-    def __init__( self, app, appconfig, workdata, skeleton ):
-        self.app = app
-        self.appconfig = appconfig
-        self.workdata = workdata
-        self.skeleton = skeleton
-        self.jobid = workdata["jobid"]
-        self.remaproot = appconfig["remaproot"]
-        self.progress = 0
+# logger = logging.getLogger(__name__)
+logger = logging.getLogger("Mapper")
+
+def create_worker( app, appconfig, workdata ):
+    return Mapper( app, appconfig, workdata )
+
+class Mapper(WorkerBase):
+    def __init__( self, app, appconfig, workdata ):
+        WorkerBase.__init__( self, app, appconfig, workdata )
         self.workerid = workdata["workid"]
 
         inputfile = os.path.join( self.remaproot, "data", self.workdata["inputfile"] )

@@ -152,7 +152,7 @@ class CoreDaemon( object ):
             appconfig["remaproot"] = self.remaproot
 
             plugin = self.load_plugin( self.workertype )
-            self.worker = plugin.create_worker( app, appconfig, workdata, self )
+            self.worker = plugin.create_worker( app, appconfig, workdata )
         else:
             logger.warn("Unknown personal message received from node: %s"%( msgtype ))
 
@@ -170,9 +170,13 @@ class CoreDaemon( object ):
 
     def send_status( self ):
         if self.jobid != None:
-            data = self.worker.status()
-            data["type"] = self.workertype
-            self.pub.send( remap_utils.pack_msg( "%s.corestatus.%s"%(self.jobid, self.coreid), data ) )
+            if not self.worker.module_manages_progress():
+                data = self.worker.status()
+                data["type"] = self.workertype
+                self.pub.send( remap_utils.pack_msg( "%s.corestatus.%s"%(self.jobid, self.coreid), data ) )
+            else:
+                # Still need to send a message to node daemon, which manages processes at local level.
+                self.pub.send( remap_utils.pack_msg( "node._status.%s"%(self.coreid), {} ) )
 
     def do_more_work( self ):
         # Check if we have some work to do already

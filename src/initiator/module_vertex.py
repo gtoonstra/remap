@@ -3,6 +3,7 @@ import os
 import logging
 import time
 from threading import Timer
+import nanomsg as nn
 
 parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent)
@@ -15,15 +16,16 @@ from base_module import FileModule
 logging.basicConfig( level=logging.INFO ) 
 
 # logger = logging.getLogger(__name__)
-logger = logging.getLogger("Mapper")
+logger = logging.getLogger("Vertex")
 
 def create_manager( workdata, config ):
-    return Mapper( workdata, config )
+    return Vertex( workdata, config )
 
-class Mapper(FileModule):
+class Vertex(FileModule):
     def __init__(self, workdata, config):
         FileModule.__init__(self,workdata,config)
-        logger.info("Created a mapper job for %s"%( self.appname ))
+        self.surveyor = nn.Socket( nn.SURVEYOR )
+        self.surveyor.bind( "tcp://0.0.0.0:8688" )
 
     def create_job_data( self, filename, idx ):
         inputfile = os.path.join( self.relinputdir, filename )
@@ -31,7 +33,7 @@ class Mapper(FileModule):
         jobdata["jobid"] = self.jobid
         jobdata["appdir"] = self.appname
         jobdata["appconfig"] = self.relconfig_file
-        jobdata["type"] = "mapper"
+        jobdata["type"] = "vertex"
         jobdata["workid"] = "%05d"%( idx )
         return inputfile, jobdata
 
@@ -39,5 +41,14 @@ class Mapper(FileModule):
         return data["inputfile"]
 
     def module_tracks_progress( self ):
-        return False
+        return True
+
+    def all_hands_on_deck( self ):
+        return True
+
+    def finish( self ):
+        self.surveyor.close()
+
+    def check_progress( self ):
+        pass
 

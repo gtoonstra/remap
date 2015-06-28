@@ -133,6 +133,8 @@ class NodeDaemon( object ):
             self.process_hello( data )
         if msgtype == "_todo":
             self.process_todo( senderid, data )
+        if msgtype == "_status":
+            self.process_status( senderid, data )
 
     def forward_to_broker( self, msg ):
         if self.bpub != None:
@@ -161,6 +163,10 @@ class NodeDaemon( object ):
             logger.info( "A core was given some work to do: %s"%( senderid ))
             self.lpub.send( msg )
 
+    def process_status( self, senderid, data ):
+        coredata = self.cores[ senderid ]
+        coredata["ts_last_seen"] = time.time()
+
     def process_broker_messages( self ):
         if self.bsub == None:
             # No broker is known yet.
@@ -179,7 +185,6 @@ class NodeDaemon( object ):
             self.tot_m_rcv = self.tot_m_rcv + 1
             if msg != None and len(msg)>0:
                 msgprefix, data = remap_utils.unpack_msg( msg )
-                logger.info("Received %s"%(msgprefix))
                 recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
                 if msgtype == "showhands":
                     self.handle_showhands( recipientid, senderid, data )

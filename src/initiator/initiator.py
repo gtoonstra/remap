@@ -208,6 +208,8 @@ class Initiator( Monitor ):
     def resume( self ):
         self.manager.prepare()
 
+        logger.info("Starting a %s job"%( self.jobtype ))
+
         self.planner = JobPlanner( self.manager.config_file )
         self.tasks = self.manager.plan_jobs( self.planner )
 
@@ -218,6 +220,10 @@ class Initiator( Monitor ):
             logger.error("No nodes found to distribute the tasks.")
             self.job_in_progress = False
             return
+
+        if self.manager.all_hands_on_deck():
+            if len(self.allocatedtasks) != len(self.tasks):
+                raise RemapException("Not enough cores available. Have %d, need %d."%( len(self.allocatedtasks), len(self.tasks) ))
 
         logger.info( "%d new tasks distributed over %d nodes."%( len(self.allocatedtasks), numnodes ))
         self.job_in_progress = True
@@ -249,38 +255,43 @@ class Initiator( Monitor ):
         if time.time() - self.last_check <= 4:
             return
 
-        newtime = time.time()
-        kill_list = []
-        for key, job in self.allocatedtasks.items():
-            if newtime > job["ts_finish"]:
-                # This job hasn't been updated, probably dead.
-                jobdata = job["jobdata"]
-                # Update tasks with an attempt + 1
-                task = self.tasks[ key ]
-                task["attempts" ] = task["attempts" ] + 1
-                nodeid = job["nodeid"]
-                logger.info( "Task %s failed on node %s. Reattempting elsewhere"%( key, nodeid ))
-                if task["attempts" ] > 4:
-                    # 5 attempts so far. let's cancel it.
-                    logger.warn("Task %s failed 5 attempts. Cancelling file to reject."%( key ))
-                    del self.tasks[ key ]
-                    kill_list.append( key )
-                    self.rejectedtasks[ key ] = task
+        if self.manager.module_tracks_progress():
+            self.manager.check_progress()
+        else:
+            newtime = time.time()
+            kill_list = []
+            for key, job in self.allocatedtasks.items():
+                if newtime > job["ts_finish"]:
+                    # This job hasn't been updated, probably dead.
+                    jobdata = job["jobdata"]
+                    # Update tasks with an attempt + 1
+                    task = self.tasks[ key ]
+                    task["attempts" ] = task["attempts" ] + 1
+                    nodeid = job["nodeid"]
+                    logger.info( "Task %s failed on node %s. Reattempting elsewhere"%( key, nodeid ))
+                    if task["attempts" ] > 4:
+                        # 5 attempts so far. let's cancel it.
+                        logger.warn("Task %s failed 5 attempts. Cancelling file to reject."%( key ))
+                        del self.tasks[ key ]
+                        kill_list.append( key )
+                        self.rejectedtasks[ key ] = task
 
-        for key in kill_list:
-            del self.allocatedtasks[key]
+            for key in kill_list:
+                del self.allocatedtasks[key]
 
-        # Now also check if there are jobs that can be started
-        if len(self.tasks) > 0:
-            numnodes, new_allocations = self.planner.distribute_jobs_over_nodes( self.tasks, self.allocatedtasks, self.nodes, self.parallellism )
-            if numnodes > 0:
-                logger.info( "%d new tasks distributed over %d nodes"%( len(new_allocations), numnodes ))
-                self.outbound_work( new_allocations )
-                self.allocatedtasks.update( new_allocations )
+            # Now also check if there are jobs that can be started
+            if len(self.tasks) > 0:
+                numnodes, new_allocations = self.planner.distribute_jobs_over_nodes( self.tasks, self.allocatedtasks, self.nodes, self.parallellism )
+                if numnodes > 0:
+                    logger.info( "%d new tasks distributed over %d nodes"%( len(new_allocations), numnodes ))
+                    self.outbound_work( new_allocations )
+                    self.allocatedtasks.update( new_allocations )
 
         if len(self.tasks) == 0 and len(self.allocatedtasks) == 0:
             # finished all work
             self.job_in_progress = False
+            self.manager.finish()
+            self.manager = None
             logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.tasks), len(self.allocatedtasks), len(self.completedtasks), len(self.rejectedtasks) ))
 
         self.last_check = time.time()        

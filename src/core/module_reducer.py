@@ -11,20 +11,15 @@ sys.path.insert(0, parent)
 import lib.remap_utils as remap_utils
 import lib.remap_constants as remap_constants
 from lib.remap_utils import RemapException
+from base_module import WorkerBase
 
-def create_worker( app, appconfig, workdata, skeleton ):
-    return Reducer( app, appconfig, workdata, skeleton )
+def create_worker( app, appconfig, workdata ):
+    return Reducer( app, appconfig, workdata )
 
-class Reducer(object):
-    def __init__( self, app, appconfig, workdata, skeleton ):
-        self.app = app
-        self.appconfig = appconfig
-        self.workdata = workdata
-        self.skeleton = skeleton
-        self.jobid = workdata["jobid"]
-        self.remaproot = appconfig["remaproot"]
+class Reducer(WorkerBase):
+    def __init__( self, app, appconfig, workdata ):
+        WorkerBase.__init__( self, app, appconfig, workdata )
         self.total_size = 0
-        self.progress = 0
         self.prevkey = None
 
         # This is a reducer operation

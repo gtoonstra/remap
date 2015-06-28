@@ -51,4 +51,62 @@ class BaseModule(object):
             except OSError as e:
                 raise RemapException("Directory not copied: %s"%(e))
 
+    def all_hands_on_deck( self ):
+        return False
+
+    def finish( self ):
+        pass
+
+class FileModule(BaseModule):
+    def __init__( self, workdata, config ):
+        BaseModule.__init__(self, workdata, config )
+
+        self.type = workdata["type"]
+        self.check_param( "inputdir" )
+        inputdir = workdata["inputdir"]
+        self.inputdir = os.path.join( self.datadir, inputdir.strip("/") )
+
+        if not os.path.isdir( self.inputdir ):
+            raise RemapException("Input dir does not exist: %s"%(self.inputdir))
+
+        self.relinputdir = inputdir
+
+    def prepare( self ):
+        self.base_prepare( True )
+
+        self.partitions_dir = os.path.join( self.job_dir, "part" )
+        # In the normal mapper process, the output should not yet exist.
+
+        os.makedirs( self.partitions_dir )
+
+    def plan_jobs( self, planner ):
+        return planner.task_per_file_in_dir( self.create_job_data, self.inputdir )
+
+class DirModule(BaseModule):
+    def __init__( self, workdata, config ):
+        BaseModule.__init__(self, workdata, config )
+
+        self.check_param( "outputdir" )
+        outputdir = workdata["outputdir"]
+
+        verifyDir = os.path.join( self.remaproot, "job", self.jobid )
+        self.outputdir = os.path.join( self.datadir, outputdir.strip("/") )
+
+        if not os.path.isdir( verifyDir ):
+            raise RemapException("Input dir does not exist: %s"%(verifyDir))
+        if os.path.isdir( self.outputdir ):
+            raise RemapException("Output dir already exists: %s"%(self.outputdir))
+
+        self.reloutputdir = outputdir
+
+    def prepare( self ):
+        self.base_prepare( False )
+
+        os.makedirs( self.outputdir )
+
+    def plan_jobs( self, planner ):
+        return planner.task_per_dir( self.create_job_data, os.path.join( self.remaproot, "job", self.jobid, "part" ) )
+
+    def module_tracks_progress( self ):
+        return False
 

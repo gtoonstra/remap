@@ -18,8 +18,6 @@ def create_reducer_writer( outputdir, partition ):
 def list_combiner( l ):
     return list(set(l))
 
-# map just creates one record of the word and a '1' to count it,
-# it also directs the mapped value to a specific partition
 def map( key, value ):
     remove = ".,?:;!\""
     trans = str.maketrans(remove, ' ' * len(remove))
