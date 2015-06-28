@@ -12,7 +12,7 @@ class NodeHardware(object):
         for key, coredata in active_cores.items():
             if coredata["priority"] < priority:
                 interruptable = interruptable + 1
-        available = cpus - 1 - len(active_cores)
+        available = cpus - len(active_cores)
         return available, interruptable
 
     def start_job( self, remaproot, jobid, numcores, data ):
