@@ -22,13 +22,15 @@
       <h3>
 <a id="welcome-to-remap" class="anchor" href="#welcome-to-remap" aria-hidden="true"><span class="octicon octicon-link"></span></a>Welcome to Remap.</h3>
 
-<p>Remap is a generic execution environment for running worker process in a distributed manner. At the moment, worker processes for map/reduce are implemented and work is being done on "vertex" jobs, which are worker processes for graph data.</p>
+<p>Remap is a generic execution environment for distributed worker processes. At the moment, worker processes for map/reduce are implemented and work is being done on "vertex" jobs, which are worker processes for graph data.</p>
 
 <p>The entire code base is written in python. It relies on nanomsg for message passing and if you want to run distributed, you need to use a distributed file system (cephfs, nfs), or copy all files to all disks.</p>
 
-<p>Remap is not intended for 100's of nodes (at this time), it's targeted at researchers and small installations of 1-50 nodes or so. The benefit is that it's easy to install and you should be able to have a working environment ready for a first example in about 5 minutes (once the docs improve). </p>
+<p>Remap is targeted at developers, researchers and tinkerers with small installations of 1-50 nodes or so, so it's far from ready for prime-time 1000's of node installations. The main benefit is that if you don't have a cluster yet, have plenty of files to process and want to get your feet wet with the technology, remap can be very helpful.</p>
 
-<p>Please check the <a href="https://github.com/gtoonstra/remap/wiki">wiki</a> for more information</p>
+<p>Remap is extensible, so if map/reduce or 'vertex' (pregel) do not work for you, there are ways to write your own worker processes as a module on top of a daemon process. This module should then implement a couple of functions for status reporting, job control and lifetime management. You can always hook up on github to get more information on how to do that, the existing implementations should give you some insight how this is done (src/core and src/initiator).</p>
+
+<p>There's a <a href="https://github.com/gtoonstra/remap/wiki">wiki</a> with the design, some info to get started and some example implementations.</p>
 
       <footer class="site-footer">
         <span class="site-footer-owner"><a href="https://github.com/gtoonstra/remap">Remap</a> is maintained by <a href="https://github.com/gtoonstra">gtoonstra</a>.</span>
