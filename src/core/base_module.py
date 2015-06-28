@@ -18,15 +18,10 @@ class WorkerBase(object):
         self.jobid = workdata["jobid"]
         self.remaproot = appconfig["remaproot"]
         self.progress = 0
-        self.workerid = workdata["workid"]
-
-        inputfile = os.path.join( self.remaproot, "data", self.workdata["inputfile"] )
-        outputdir = os.path.join( self.remaproot, "job", self.jobid, "part" )
-
-        self.input = self.app.create_mapper_reader( inputfile )
-        self.outputdir = outputdir
-        self.partitions = {}
 
     def module_manages_progress( self ):
         return False
+
+    def prepare( self, sub_fn ):
+        pass
 

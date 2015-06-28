@@ -256,7 +256,7 @@ class Initiator( Monitor ):
             return
 
         if self.manager.module_tracks_progress():
-            self.manager.check_progress()
+            self.manager.check_progress( len(self.tasks) )
         else:
             newtime = time.time()
             kill_list = []

@@ -19,6 +19,9 @@ def unpack_msg( msg ):
     except ValueError as ve:
         raise RemapException( "Invalid message" ) from ve
 
+def decode( msg ):
+    return msg.decode("utf-8")
+
 def pack_msg( prefix, data ):
     msg = "%s %s"%( prefix, json.dumps( data ))
     return msg
@@ -46,4 +49,5 @@ def split_prefix( prefix ):
         return r,t,s
     except ValueError as ve:
         raise RemapException( "Invalid prefix %s"%( prefix ) ) from ve
+
 

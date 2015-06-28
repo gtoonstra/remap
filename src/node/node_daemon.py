@@ -102,9 +102,17 @@ class NodeDaemon( object ):
         try:
             msg = self.lsub.recv()
             msgprefix, data = remap_utils.unpack_msg( msg )
+
+            if len(msgprefix) == 0:
+                return True
+
+            if msgprefix[0] == 'v':
+                self.forward_to_broker( msg )
+                return True
+
             recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
 
-            if msgtype.startswith("_"):
+            if msgtype[0] == '_':
                 # node message
                 self.process_core_message( msgtype, senderid, data )
             elif msgtype == "corestatus":
@@ -135,6 +143,10 @@ class NodeDaemon( object ):
             self.process_todo( senderid, data )
         if msgtype == "_status":
             self.process_status( senderid, data )
+        if msgtype == "_sub":
+            self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, data["prefix"])
+        if msgtype == "_unsub":
+            self.bsub.set_string_option( nn.SUB, nn.SUB_UNSUBSCRIBE, data["prefix"])
 
     def forward_to_broker( self, msg ):
         if self.bpub != None:
@@ -183,8 +195,13 @@ class NodeDaemon( object ):
             # Grab next msg from broker if any
             msg = self.bsub.recv()
             self.tot_m_rcv = self.tot_m_rcv + 1
-            if msg != None and len(msg)>0:
-                msgprefix, data = remap_utils.unpack_msg( msg )
+            if msg == None or len(msg)==0:
+                return False
+
+            msgprefix, data = remap_utils.unpack_msg( msg )
+            if msgprefix[0] == 'v':
+                self.lpub.send( msg )
+            else:
                 recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
                 if msgtype == "showhands":
                     self.handle_showhands( recipientid, senderid, data )
@@ -194,9 +211,7 @@ class NodeDaemon( object ):
                 else:
                     # Forward to all cores for their processing.
                     self.lpub.send(msg)
-                return True
-            else:
-                return False
+            return True
         except nn.NanoMsgAPIError as e:
             return False
 

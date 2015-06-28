@@ -59,6 +59,11 @@ class CoreDaemon( object ):
         try:
             msg = self.sub.recv()
             msgprefix, data = remap_utils.unpack_msg( msg )
+
+            if msgprefix[0] == 'v':
+                self.worker.add_message( msgprefix, data )
+                return True
+
             recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
 
             if recipientid == self.coreid:
@@ -78,13 +83,25 @@ class CoreDaemon( object ):
         except nn.NanoMsgAPIError as e:
             return False
 
+    def forward( self, prefix, data ):
+        msg = remap_utils.pack_msg( prefix, data )
+        self.pub.send( msg )
+
+    def subscribe( self, prefix, doSub ):
+        if doSub:
+            self.sub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, prefix )
+            self.forward( "node._sub.%s"%(self.coreid), { "prefix":prefix } )
+        else:
+            self.sub.set_string_option( nn.SUB, nn.SUB_UNSUBSCRIBE, prefix )
+            self.forward( "node._unsub.%s"%(self.coreid), { "prefix":prefix } )
+
     # this function registers the new core process with node
     def register( self ):
         self.set_node_timeout( 500 )
         msgid = remap_utils.unique_id()
 
         logger.info( "Registering with node" )
-        self.pub.send( remap_utils.pack_msg( "node._hello.%d"%(self.pid), {"msgid":msgid,"pid":self.pid,"priority":self.priority} ) )
+        self.forward( "node._hello.%d"%(self.pid), {"msgid":msgid,"pid":self.pid,"priority":self.priority} )
 
         # The while loop will terminate as soon as node stops sending messages,
         # so this should be safe to do.
@@ -153,6 +170,7 @@ class CoreDaemon( object ):
 
             plugin = self.load_plugin( self.workertype )
             self.worker = plugin.create_worker( app, appconfig, workdata )
+            self.worker.prepare( self.subscribe )
         else:
             logger.warn("Unknown personal message received from node: %s"%( msgtype ))
 
@@ -173,18 +191,18 @@ class CoreDaemon( object ):
             if not self.worker.module_manages_progress():
                 data = self.worker.status()
                 data["type"] = self.workertype
-                self.pub.send( remap_utils.pack_msg( "%s.corestatus.%s"%(self.jobid, self.coreid), data ) )
+                self.forward( "%s.corestatus.%s"%(self.jobid, self.coreid), data )
             else:
                 # Still need to send a message to node daemon, which manages processes at local level.
-                self.pub.send( remap_utils.pack_msg( "node._status.%s"%(self.coreid), {} ) )
+                self.forward( "node._status.%s"%(self.coreid), {} )
 
     def do_more_work( self ):
         # Check if we have some work to do already
         if self.jobid != None:
-            if not self.worker.work():
+            if not self.worker.work( self.forward, self.subscribe ):
                 result, data = self.worker.result()
                 data["type"] = self.workertype
-                self.pub.send( remap_utils.pack_msg( "%s.%s.%s"%(self.jobid, result, self.coreid), data ) )
+                self.forward( "%s.%s.%s"%(self.jobid, result, self.coreid), data )
                 return False
         else:
             # No work yet, so let's request some and otherwise wait 5 seconds until
@@ -201,7 +219,7 @@ class CoreDaemon( object ):
 
             logger.info( "Grabbing work item from node" )
             self.ts_workRequested = time.time()
-            self.pub.send( remap_utils.pack_msg( "node._todo.%s"%(self.coreid), {} ) )
+            self.forward( "node._todo.%s"%(self.coreid), {} )
         return True
 
     def shutdown( self ):

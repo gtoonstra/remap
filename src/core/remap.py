@@ -6,10 +6,11 @@ from xml.etree.ElementTree import ElementTree
 from html.parser import HTMLParser
 
 class BaseReader(object):
-    def __init__(self,filename):
+    def __init__(self,filename,yieldkv):
         self.filename = filename
         self.filesize = os.stat(filename).st_size 
         self.complete = False
+        self.yieldkv = yieldkv
 
     def isComplete( self ):
         return self.complete
@@ -17,15 +18,18 @@ class BaseReader(object):
 # A class for reading in raw data to be processed.
 # Used as input to the mapper
 class TextFileReader(BaseReader):
-    def __init__( self, filename ):
-        BaseReader.__init__(self,filename)
+    def __init__( self, filename, yieldkv=True ):
+        BaseReader.__init__(self,filename,yieldkv)
         self.f = open(self.filename, 'r')
         self.pos = 0
 
     def read( self ):
         for line in self.f:
             self.pos = self.pos + len(line)
-            yield self.filename, line
+            if self.yieldkv:
+                yield self.filename, line
+            else:
+                yield line
         self.complete = True
 
     def progress( self ):
@@ -37,8 +41,8 @@ class TextFileReader(BaseReader):
 # A class for reading in raw data to be processed.
 # Used as input to the mapper
 class XMLFileReader(BaseReader):
-    def __init__( self, filename ):
-        BaseReader.__init__(self,filename)
+    def __init__( self, filename, yieldkv=True ):
+        BaseReader.__init__(self,filename, yieldkv)
         self.curelem = 0
         self.tree = ElementTree()
         self.tree.parse( filename )
@@ -48,7 +52,11 @@ class XMLFileReader(BaseReader):
     def read( self ):
         for elem in self.tree.iter():
             self.curelem = self.curelem + 1
-            yield self.filename, elem.text
+            if self.yieldkv:
+                yield self.filename, elem.text
+            else:
+                yield elem.text
+
         self.complete = True
 
     def progress( self ):
@@ -58,8 +66,8 @@ class XMLFileReader(BaseReader):
         pass
 
 class HTMLFileReader(TextFileReader, HTMLParser):
-    def __init__( self, filename ):
-        TextFileReader.__init__(self,filename)
+    def __init__( self, filename, yieldkv=True ):
+        TextFileReader.__init__(self,filename,yieldkv)
         HTMLParser.__init__(self)
         self.data = None
 
@@ -74,8 +82,11 @@ class HTMLFileReader(TextFileReader, HTMLParser):
         for line in self.f:
             self.pos = self.pos + len(line)
             self.feed(line)
-            yield self.filename, self.data
- 
+            if self.yieldkv:
+                yield self.filename, self.data
+            else:
+                yield self.data
+
         self.complete = True
 
 # A partitioner creates intermediate data. It is responsible for accepting large volumes of
