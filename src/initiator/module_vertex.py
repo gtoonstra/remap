@@ -26,6 +26,7 @@ class Vertex(FileModule):
         FileModule.__init__(self,workdata,config)
         self.surveyor = nn.Socket( nn.SURVEYOR )
         self.surveyor.bind( "tcp://0.0.0.0:8688" )
+        self.superstep = 0
 
     def create_job_data( self, filename, idx ):
         inputfile = os.path.join( self.relinputdir, filename )
@@ -50,5 +51,5 @@ class Vertex(FileModule):
         self.surveyor.close()
 
     def check_progress( self ):
-        pass
+        self.surveyor.send( "%d"%(self.superstep) )
 
