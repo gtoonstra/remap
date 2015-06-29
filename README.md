@@ -16,3 +16,7 @@ So the focus of this implementation is on:
 If this sounds interesting, please follow the steps on the wiki to take it for a quick test run:
 
 https://github.com/gtoonstra/remap/wiki
+
+##Help wanted
+
+I'm looking for people who're interested in helping out. There's work to be done on design, plumbing, reliability testing, UI for a dashboard and a small nodejs server to interact with the cluster. See the wiki for details.
