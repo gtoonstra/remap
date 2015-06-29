@@ -20,3 +20,11 @@ https://github.com/gtoonstra/remap/wiki
 ##Help wanted
 
 I'm looking for people who're interested in helping out. There's work to be done on design, plumbing, reliability testing, UI for a dashboard and a small nodejs server to interact with the cluster. See the wiki for details.
+
+##Contact
+
+There's a project mailing list for users and developers:
+
+http://www.freelists.org/list/remap
+
+You can also mail me at my gmail account. Use my github username.
