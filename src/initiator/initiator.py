@@ -252,12 +252,13 @@ class Initiator( Monitor ):
             self.forward_to_broker( msg )
 
     def check_progress( self ):
-        if time.time() - self.last_check <= 4:
-            return
-
         if self.manager.module_tracks_progress():
-            self.manager.check_progress( len(self.tasks) )
+            if not self.manager.check_progress( len(self.tasks) ):
+                self.manager.finish()
+                self.job_in_progress = False
         else:
+            if time.time() - self.last_check <= 4:
+                return
             newtime = time.time()
             kill_list = []
             for key, job in self.allocatedtasks.items():
@@ -287,12 +288,12 @@ class Initiator( Monitor ):
                     self.outbound_work( new_allocations )
                     self.allocatedtasks.update( new_allocations )
 
-        if len(self.tasks) == 0 and len(self.allocatedtasks) == 0:
-            # finished all work
-            self.job_in_progress = False
-            self.manager.finish()
-            self.manager = None
-            logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.tasks), len(self.allocatedtasks), len(self.completedtasks), len(self.rejectedtasks) ))
+            if len(self.tasks) == 0 and len(self.allocatedtasks) == 0:
+                # finished all work
+                self.job_in_progress = False
+                self.manager.finish()
+                self.manager = None
+                logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.tasks), len(self.allocatedtasks), len(self.completedtasks), len(self.rejectedtasks) ))
 
         self.last_check = time.time()        
 

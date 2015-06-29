@@ -24,6 +24,7 @@ def create_manager( workdata, config ):
 
 MODE_NORMAL = 1
 MODE_RECOVERY = 2
+MODE_HALT = 3
 
 class Vertex(FileModule):
     def __init__(self, workdata, config):
@@ -31,13 +32,11 @@ class Vertex(FileModule):
         self.surveyor = nn.Socket( nn.SURVEYOR )
         self.surveyor.bind( "tcp://0.0.0.0:8688" )
 
-        # BUG: Needs time.sleep after bind to get rid of nanomsg api error
-        time.sleep(0.1)
-
         # 10 seconds max
         self.surveyor.set_int_option( nn.SURVEYOR, nn.SURVEYOR_DEADLINE, 10 )
         self.superstep = 0
         self.mode = MODE_NORMAL
+        self.first = True
 
     def create_job_data( self, filename, idx ):
         inputfile = os.path.join( self.relinputdir, filename )
@@ -64,14 +63,24 @@ class Vertex(FileModule):
         self.surveyor.close()
 
     def check_progress( self, numtasks ):
-        # wait 1 second for messages to finish propagating
-        time.sleep(1.0)
+        if self.first:
+            self.first = False
+            # First time, wait 1 second for at least one worker to connect
+            # BUG in surveyor protocol nanomsg
+            time.sleep(1.0)
+
+        # wait 0.2 second for messages to finish propagating
+        time.sleep(0.2)
 
         if self.mode == MODE_NORMAL:
             logger.info("Processing in normal mode")
-            self.process_normal_mode( numtasks )
+            return self.process_normal_mode( numtasks )
         elif self.mode == MODE_RECOVERY:   
             logger.info("Recovery mode")
+            return False
+        elif self.mode == MODE_HALT:   
+            logger.info("Halt mode")
+            return self.process_halt_mode( numtasks )
 
     def process_normal_mode( self, numtasks ):
         self.surveyor.send( "P" )
@@ -79,12 +88,12 @@ class Vertex(FileModule):
         try:
             while( True ):
                 msg = remap_utils.decode( self.surveyor.recv() )
-                print(msg)
                 respondents = respondents + 1
                 if respondents == numtasks:
                     break
         except nn.NanoMsgAPIError as nme:
             print(nme)
+            self.mode = MODE_RECOVERY
 
         self.surveyor.send( "%d"%(self.superstep) )
         halt = True
@@ -101,9 +110,25 @@ class Vertex(FileModule):
                     break
         except nn.NanoMsgAPIError as nme:
             print(nme)
+            self.mode = MODE_RECOVERY
 
         if halt:
-            print("Halting")
+            self.mode = MODE_HALT
         else:
             self.superstep = self.superstep + 1
+        return True
+
+    def process_halt_mode( self, numtasks ):
+        self.surveyor.send( "HALT" )
+        respondents = 0
+        try:
+            while( True ):
+                msg = remap_utils.decode( self.surveyor.recv() )
+                respondents = respondents + 1
+                if respondents == numtasks:
+                    break
+        except nn.NanoMsgAPIError as nme:
+            print(nme)
+
+        return False
 

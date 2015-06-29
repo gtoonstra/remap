@@ -35,7 +35,7 @@ class Vertex(WorkerBase):
         self.surveyor = nn.Socket( nn.RESPONDENT )
         self.surveyor.connect( "tcp://%s:8688"%(self.surveyorname) )
         # 6 seconds
-        self.surveyor.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, 6000 )
+        self.surveyor.set_int_option( nn.SOL_SOCKET, nn.RCVTIMEO, 50 )
         self.vertices = {}
 
     def add_message( self, prefix, data ):
@@ -66,12 +66,22 @@ class Vertex(WorkerBase):
         return inner
 
     def work( self, forward_fn, sub_fn ):
-        msg = remap_utils.decode( self.surveyor.recv() )
+        msg = None
+        try:
+            msg = remap_utils.decode( self.surveyor.recv() )
+        except nn.NanoMsgAPIError as e:
+            return True
+
         if msg[0] == 'P':
             for key, (vertex,messages,messagesNext) in self.vertices.items():
                 self.vertices[ key ] = ( vertex, messagesNext, [] )
             self.surveyor.send( "OK" )
             return True
+
+        if msg == "HALT":
+            logger.info("Halting core.")
+            self.surveyor.close()
+            return False
 
         self.superstep = int(msg)
         mainHalt = True

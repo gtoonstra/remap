@@ -302,3 +302,4 @@ if __name__ == "__main__":
             health_check = new_ts            
             node.purge_inactive_cores( new_ts )
             node.maybe_send_status()
+

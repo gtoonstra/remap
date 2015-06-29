@@ -7,8 +7,6 @@ def create_vertex_reader( filename ):
 def create_vertex_partitioner( outputdir, partition, mapperid ):
     return remap.TextPartitioner( outputdir, partition, mapperid )
 
-NUM_VERTICES = 10
-
 # ---- pagerank vertex implementation ----
 def prepare( line ):
     line = line.strip()
@@ -16,31 +14,31 @@ def prepare( line ):
         return None, None
 
     elems = line.split()
-
     out = []
-    for i in range(1,len(elems)):
+
+    for i in range(2,len(elems)):
         if len(elems[i]) > 0:
             out.append( elems[ i ] )
 
-    vertex = ( 1.0 / NUM_VERTICES, out )
+    vertex = ( int(elems[1]), out )
     return elems[0], vertex
 
 def compute( send_fn, superstep, vertex, messages ):
     (val, out) = vertex
-    if (superstep >= 1):
-        sum = 0
-        
-        for data in messages:
-            sum = sum + float(data)
 
-        val = 0.15 / NUM_VERTICES + 0.85 * sum
-        vertex = ( val, out )
+    halt = True
+    for data in messages:
+        if int(data) > val:
+            val = int(data)
+            halt = False
 
-    if superstep < 30:
-        for vertex_id in out:
-            send_fn( vertex_id, "%f"%( val / len(out) ))
-    else:
-        return vertex, True
+    if superstep == 0:
+        halt = False
 
-    return vertex, False
+    vertex = (val,out)
+
+    for vertex_id in out:
+        send_fn( vertex_id, "%d"%( val ))
+
+    return vertex, halt
 
