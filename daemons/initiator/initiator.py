@@ -34,7 +34,7 @@ class Initiator( Monitor ):
         self.bonjour.start()
         self.jobid = None
         self.refreshed = 0
-        self.job_in_progress = False
+        self.job_status = "waiting"
         self.rejectedtasks = {}
         self.completedtasks = {}
         self.tasks = {}
@@ -42,6 +42,7 @@ class Initiator( Monitor ):
         self.jobtype = "not_started"
         self.priority = 0
         self.parallellism = 1
+        self.manager = None
         self.last_check = time.time()
 
     def load_plugin(self, name):
@@ -163,7 +164,7 @@ class Initiator( Monitor ):
     # -------
 
     def start_job( self, jobdata ):
-        if self.job_in_progress:
+        if self.job_status != "waiting":
             raise RemapException("A job is currently in progress on this monitor")
 
         if "type" not in jobdata:
@@ -172,6 +173,9 @@ class Initiator( Monitor ):
             raise RemapException("Must have priority specified" )
         if "parallellism" not in jobdata:
             raise RemapException("Must have parallellism specified" )
+
+        self.job_status = "preparing"
+        self.prepare_start = time.time()
 
         self.jobtype = jobdata[ "type" ]
         self.priority = jobdata[ "priority" ]
@@ -211,6 +215,8 @@ class Initiator( Monitor ):
         else:
             self.resume()
 
+        return {"jobid":self.jobid}
+
     def resume( self ):
         self.manager.prepare()
 
@@ -224,7 +230,7 @@ class Initiator( Monitor ):
         numnodes, self.allocatedtasks = self.planner.distribute_jobs_over_nodes( self.tasks, {}, self.nodes, self.parallellism )
         if len(self.allocatedtasks) == 0:
             logger.error("No nodes found to distribute the tasks.")
-            self.job_in_progress = False
+            self.job_status = "waiting"
             return
 
         if self.manager.all_hands_on_deck():
@@ -232,7 +238,7 @@ class Initiator( Monitor ):
                 raise RemapException("Not enough cores available. Have %d, need %d."%( len(self.allocatedtasks), len(self.tasks) ))
 
         logger.info( "%d new tasks distributed over %d nodes."%( len(self.allocatedtasks), numnodes ))
-        self.job_in_progress = True
+        self.job_status = "executing"
         self.outbound_work( self.allocatedtasks )
 
     # In outbound work we update our local "jobs" data with timestamps
@@ -258,48 +264,62 @@ class Initiator( Monitor ):
             self.forward_to_broker( msg )
 
     def check_progress( self ):
-        if self.manager.module_tracks_progress():
-            if not self.manager.check_progress( len(self.tasks) ):
-                self.manager.finish()
-                self.job_in_progress = False
+        if self.manager != None:
+            if self.manager.module_tracks_progress():
+                if not self.manager.check_progress( len(self.tasks) ):
+                    self.manager.finish()
+                    self.job_status = "waiting"
+            else:
+                if time.time() - self.last_check <= 4:
+                    return
+                newtime = time.time()
+                kill_list = []
+                for key, job in self.allocatedtasks.items():
+                    if newtime > job["ts_finish"]:
+                        # This job hasn't been updated, probably dead.
+                        jobdata = job["jobdata"]
+                        # Update tasks with an attempt + 1
+                        task = self.tasks[ key ]
+                        task["attempts" ] = task["attempts" ] + 1
+                        nodeid = job["nodeid"]
+                        logger.info( "Task %s failed on node %s. Reattempting elsewhere"%( key, nodeid ))
+                        if task["attempts" ] > 4:
+                            # 5 attempts so far. let's cancel it.
+                            logger.warn("Task %s failed 5 attempts. Cancelling file to reject."%( key ))
+                            del self.tasks[ key ]
+                            kill_list.append( key )
+                            self.rejectedtasks[ key ] = task
+
+                for key in kill_list:
+                    del self.allocatedtasks[key]
+
+                # Now also check if there are jobs that can be started
+                if len(self.tasks) > 0:
+                    numnodes, new_allocations = self.planner.distribute_jobs_over_nodes( self.tasks, self.allocatedtasks, self.nodes, self.parallellism )
+                    if numnodes > 0:
+                        logger.info( "%d new tasks distributed over %d nodes"%( len(new_allocations), numnodes ))
+                        self.outbound_work( new_allocations )
+                        self.allocatedtasks.update( new_allocations )
+
+                if self.job_status == "executing" and len(self.tasks) == 0 and len(self.allocatedtasks) == 0:
+                    # finished all work
+                    self.job_status = "waiting"
+                    self.manager.finish()
+                    self.manager = None
+                    logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.tasks), len(self.allocatedtasks), len(self.completedtasks), len(self.rejectedtasks) ))
+
+                if self.job_status == "preparing" and time.time() - self.prepare_start > 5:
+                    # over 5 seconds? quit it
+                    self.job_status = "waiting"
+                    if self.manager != None:
+                        self.manager.finish()
+                        self.manager = None
+                    logger.info( "Cancelled job in progress." )
         else:
-            if time.time() - self.last_check <= 4:
-                return
-            newtime = time.time()
-            kill_list = []
-            for key, job in self.allocatedtasks.items():
-                if newtime > job["ts_finish"]:
-                    # This job hasn't been updated, probably dead.
-                    jobdata = job["jobdata"]
-                    # Update tasks with an attempt + 1
-                    task = self.tasks[ key ]
-                    task["attempts" ] = task["attempts" ] + 1
-                    nodeid = job["nodeid"]
-                    logger.info( "Task %s failed on node %s. Reattempting elsewhere"%( key, nodeid ))
-                    if task["attempts" ] > 4:
-                        # 5 attempts so far. let's cancel it.
-                        logger.warn("Task %s failed 5 attempts. Cancelling file to reject."%( key ))
-                        del self.tasks[ key ]
-                        kill_list.append( key )
-                        self.rejectedtasks[ key ] = task
-
-            for key in kill_list:
-                del self.allocatedtasks[key]
-
-            # Now also check if there are jobs that can be started
-            if len(self.tasks) > 0:
-                numnodes, new_allocations = self.planner.distribute_jobs_over_nodes( self.tasks, self.allocatedtasks, self.nodes, self.parallellism )
-                if numnodes > 0:
-                    logger.info( "%d new tasks distributed over %d nodes"%( len(new_allocations), numnodes ))
-                    self.outbound_work( new_allocations )
-                    self.allocatedtasks.update( new_allocations )
-
-            if len(self.tasks) == 0 and len(self.allocatedtasks) == 0:
-                # finished all work
-                self.job_in_progress = False
-                self.manager.finish()
-                self.manager = None
-                logger.info( "%d jobs left, %d jobs committed, %d jobs complete, %d jobs failed."%( len(self.tasks), len(self.allocatedtasks), len(self.completedtasks), len(self.rejectedtasks) ))
+            # no manager.
+            if self.job_status != "waiting":
+                self.job_status = "waiting"
+                logger.info( "Resolving inconsistent state." )
 
         self.last_check = time.time()        
 
@@ -339,6 +359,5 @@ if __name__ == "__main__":
         except RemapException as re:
             logger.exception( re )
 
-        if initiator.job_in_progress:
-            initiator.check_progress()
+        initiator.check_progress()
 

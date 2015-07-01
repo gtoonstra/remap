@@ -36,7 +36,7 @@ class Monitor(object):
         return jobs
 
     def list_jobs( self ):
-        return {"in_progress":self.job_in_progress,"jobid":self.jobid,"type":self.jobtype,"priority":self.priority,"parallellism":self.parallellism,
+        return {"status":self.job_status,"jobid":self.jobid,"type":self.jobtype,"priority":self.priority,"parallellism":self.parallellism,
             "tasks":len(self.tasks), "allocated":len(self.allocatedtasks), "completed":len(self.completedtasks), "rejected":len(self.rejectedtasks)}
 
     def list_nodes( self ):

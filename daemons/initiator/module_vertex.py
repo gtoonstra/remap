@@ -92,6 +92,7 @@ class Vertex(FileModule):
                 if respondents == numtasks:
                     break
         except nn.NanoMsgAPIError as nme:
+            logger.error("No vertex nodes connected")
             print(nme)
             self.mode = MODE_RECOVERY
 
@@ -109,6 +110,7 @@ class Vertex(FileModule):
                     logger.info("All respondents replied")
                     break
         except nn.NanoMsgAPIError as nme:
+            logger.error("No vertex nodes connected")
             print(nme)
             self.mode = MODE_RECOVERY
 
