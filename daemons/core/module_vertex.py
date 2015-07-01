@@ -50,22 +50,23 @@ class Vertex(WorkerBase):
     def result( self ):
         return "complete", {"inputfile":self.workdata["inputfile"]}
 
-    def prepare( self, sub_fn ):
+    def prepare( self ):
         for value in self.input.read():
             key, vertex = self.app.prepare( value )
             if key == None or vertex == None:
                 continue
             # Store vertex by id in dict with 2 lists for messages
             self.vertices[ key ] = (vertex, [], [])
-            sub_fn( "v" + key, True )
+            # TODO: Subscribe to vertex broker
+            pass
 
-    def vertex_forward( self, forward_fn ):
-        def inner( prefix, data ):
-            prefix = "v" + prefix
-            forward_fn( prefix, data )
-        return inner
+    def vertex_forward( self ):
+        # Forward to vertex broker
+        pass
 
-    def work( self, forward_fn, sub_fn ):
+    # This function performs actual work. The *state* is in the initiator daemon only,
+    # so a worker is directly responsive to whatever the surveyor tells the worker to do.
+    def work( self ):
         msg = None
         try:
             msg = remap_utils.decode( self.surveyor.recv() )

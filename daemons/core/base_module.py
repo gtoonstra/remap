@@ -22,6 +22,6 @@ class WorkerBase(object):
     def module_manages_progress( self ):
         return False
 
-    def prepare( self, sub_fn ):
+    def prepare( self ):
         pass
 

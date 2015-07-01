@@ -5,13 +5,18 @@ import sys
 from distutils import dir_util
 import fileinput
 
-print("(The root directory for remap files must be writable for the current user)")
-root = input("Where to create the directory layout for remap? : ")
+root = None
 
-confirm = input("Do you really want to install remap at %s?  (y/n)  : "%( root ))
-if confirm != "y":
-    print("Install cancelled.")
-    sys.exit(-1)
+if len(sys.argv) > 1:
+    root = sys.argv[1]
+else:
+    print("(The root directory for remap files must be writable for the current user)")
+    root = input("Where to create the directory layout for remap? : ")
+
+    confirm = input("Do you really want to install remap at %s?  (y/n)  : "%( root ))
+    if confirm != "y":
+        print("Install cancelled.")
+        sys.exit(-1)
 
 # /remote/app/xxx/yyy/zzz = directory to files for a particular application
 

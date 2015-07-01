@@ -32,11 +32,16 @@ class Initiator( Monitor ):
         self.bpub = None
         self.bonjour = BonjourResolver( "_remap._tcp", self.cb_broker_changed )
         self.bonjour.start()
-        self.jobid = remap_utils.unique_id()
+        self.jobid = None
         self.refreshed = 0
         self.job_in_progress = False
         self.rejectedtasks = {}
         self.completedtasks = {}
+        self.tasks = {}
+        self.allocatedtasks = {}
+        self.jobtype = "not_started"
+        self.priority = 0
+        self.parallellism = 1
         self.last_check = time.time()
 
     def load_plugin(self, name):
@@ -67,7 +72,8 @@ class Initiator( Monitor ):
         self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "global")
         self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "local")
         self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "notlocal")
-        self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.jobid)
+        if self.jobid != None:
+            self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, self.jobid)
         self.bsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "tracker")
         self.apply_timeouts()
 

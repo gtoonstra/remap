@@ -40,7 +40,7 @@ class Mapper(WorkerBase):
 
         return "fail", {"inputfile":self.workdata["inputfile"]}
 
-    def work( self, forward_fn, sub_fn ):
+    def work( self ):
         if self.input.isComplete():
             return False
 

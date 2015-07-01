@@ -60,10 +60,6 @@ class CoreDaemon( object ):
             msg = self.sub.recv()
             msgprefix, data = remap_utils.unpack_msg( msg )
 
-            if msgprefix[0] == 'v':
-                self.worker.add_message( msgprefix, data )
-                return True
-
             recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
 
             if recipientid == self.coreid:
@@ -170,7 +166,7 @@ class CoreDaemon( object ):
 
             plugin = self.load_plugin( self.workertype )
             self.worker = plugin.create_worker( app, appconfig, workdata )
-            self.worker.prepare( self.subscribe )
+            self.worker.prepare()
         else:
             logger.warn("Unknown personal message received from node: %s"%( msgtype ))
 
@@ -199,7 +195,7 @@ class CoreDaemon( object ):
     def do_more_work( self ):
         # Check if we have some work to do already
         if self.jobid != None:
-            if not self.worker.work( self.forward, self.subscribe ):
+            if not self.worker.work():
                 result, data = self.worker.result()
                 data["type"] = self.workertype
                 self.forward( "%s.%s.%s"%(self.jobid, result, self.coreid), data )

@@ -29,16 +29,19 @@ class Monitor(object):
                     apps.append( os.path.relpath(root, self.appsdir) )
         return apps
 
-    def list_jobs( self ):
+    def list_all_jobs( self ):
         jobs = []
         for root in os.listdir( self.jobsdir ):
             jobs.append( root )
         return jobs
 
+    def list_jobs( self ):
+        return {"in_progress":self.job_in_progress,"jobid":self.jobid,"type":self.jobtype,"priority":self.priority,"parallellism":self.parallellism,
+            "tasks":len(self.tasks), "allocated":len(self.allocatedtasks), "completed":len(self.completedtasks), "rejected":len(self.rejectedtasks)}
+
     def list_nodes( self ):
         return self.nodes
 
-    def list_cores( self ):
-        return self.cores
-
+    def cancel_job( self ):
+        pass
 

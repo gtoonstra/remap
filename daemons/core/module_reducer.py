@@ -55,7 +55,7 @@ class Reducer(WorkerBase):
 
         return "fail", {"partition":self.partition}
 
-    def work( self, forward_fn, sub_fn ):
+    def work( self ):
         if len(self.sources) == 0:
             return False
 

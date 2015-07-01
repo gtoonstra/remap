@@ -148,8 +148,8 @@ class TextPartitioner( BasePartitioner ):
 
 # The part file reader reads back in one single partition file.
 class TextPartFileReader(BaseReader):
-    def __init__( self, filename ):
-        BaseReader.__init__(self,filename)
+    def __init__( self, filename, yieldkv=True ):
+        BaseReader.__init__(self,filename,yieldkv)
         self.f = open(filename, 'r')
         self.pos = 0
 

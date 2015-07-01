@@ -4,7 +4,7 @@ import os
 import sys
 
 from flask import Flask
-from flask.ext.classy import FlaskView, route
+from flask.ext.restful import Api, Resource, reqparse, fields, marshal
 from flask import request
 from flask import make_response
 from flask import Response
@@ -14,6 +14,8 @@ sys.path.insert(0, parent)
 from lib.remap_utils import RemapException
 
 app = Flask(__name__)
+api = Api(app)
+
 monitor = None
 
 @app.errorhandler(400)
@@ -32,38 +34,67 @@ def key_error(error):
     app.logger.exception(error)
     return make_response(str(error), 400)
 
-class AppsView(FlaskView):
-    def index(self):
-        return Response(json.dumps( monitor.list_apps() ),  mimetype='application/json')
 
-class JobsView(FlaskView):
-    def index(self):
-        return Response(json.dumps( monitor.list_jobs() ),  mimetype='application/json')
-    
-    @route('/start', methods=["POST"])
-    def start(self):
-        json_data = request.get_json()
-        results = monitor.start_job( json_data )
-        return Response(json.dumps(results),  mimetype='application/json')
+class AppsListApi(Resource):
+    def __init__(self):
+        super(AppsListApi, self).__init__()
 
-class NodesView(FlaskView):
-    def index(self):
-        return Response(json.dumps( monitor.list_nodes() ),  mimetype='application/json')
+    def get(self):
+        return monitor.list_apps()
 
-    @route('/refresh', methods=["POST"])
-    def refresh(self):
-        json_data = request.get_json()
-        monitor.refresh_nodes( json_data["priority"] )
-        return Response(json.dumps({}),  mimetype='application/json')
+class JobsListApi(Resource):
+    def __init__(self):
+        self.reqparse = reqparse.RequestParser()
+        self.reqparse.add_argument('type', type = str, required = True, help = 'No worker type specified', location = 'json')
+        self.reqparse.add_argument('app', type = str, required = True, help = 'No app name specified', location = 'json')
+        self.reqparse.add_argument('priority', type = int, required = True, help = 'No priority specified', location = 'json')
+        self.reqparse.add_argument('parallellism', type = int, required = True, help = 'No parallellism specified', location = 'json')
+        super(JobsListApi, self).__init__()
 
-class CoresView(FlaskView):
-    def index(self):
-        return Response(json.dumps( monitor.list_cores() ),  mimetype='application/json')
+    def get(self):
+        return monitor.list_jobs()
 
-AppsView.register(app)
-JobsView.register(app)
-NodesView.register(app)
-CoresView.register(app)
+    def post(self):
+        args = self.reqparse.parse_args()
+        try:
+            results = monitor.start_job( request.json )
+            # Created
+            return results, 201
+        except RemapException as re:
+            return str(re), 400
+
+    def delete(self):
+        monitor.cancel_job()
+
+class NodesListApi(Resource):
+    def __init__(self):
+        self.reqparse = reqparse.RequestParser()
+        self.reqparse.add_argument('priority', type = int, required = True, help = 'No priority specified', location = 'json')
+        super(NodesListApi, self).__init__()
+
+    def get(self):
+        return monitor.list_nodes()
+
+    def post(self):
+        args = self.reqparse.parse_args()
+        monitor.refresh_nodes( args["priority"] )
+        return "", 202
+
+class JobApi(Resource):
+    def __init__(self):
+        #self.reqparse = reqparse.RequestParser()
+        #self.reqparse.add_argument('jobid', type=str, location='json')
+        super(JobApi, self).__init__()
+
+    def delete(self, id):
+        if not monitor.has_job( id ):
+            abort(404)
+
+
+api.add_resource(AppsListApi, '/api/v1.0/apps', endpoint = 'apps')
+api.add_resource(JobsListApi, '/api/v1.0/jobs', endpoint = 'jobs')
+api.add_resource(NodesListApi, '/api/v1.0/nodes', endpoint = 'nodes')
+api.add_resource(JobApi, '/api/v1.0/jobs/<string:id>', endpoint='job')
 
 def run():
     global app

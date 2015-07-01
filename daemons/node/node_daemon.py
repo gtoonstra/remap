@@ -106,10 +106,6 @@ class NodeDaemon( object ):
             if len(msgprefix) == 0:
                 return True
 
-            if msgprefix[0] == 'v':
-                self.forward_to_broker( msg )
-                return True
-
             recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
 
             if msgtype[0] == '_':
@@ -199,18 +195,15 @@ class NodeDaemon( object ):
                 return False
 
             msgprefix, data = remap_utils.unpack_msg( msg )
-            if msgprefix[0] == 'v':
-                self.lpub.send( msg )
+            recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
+            if msgtype == "showhands":
+                self.handle_showhands( recipientid, senderid, data )
+            elif msgtype == "jobstart":
+                #if recipientid == self.nodeid:
+                self.handle_jobstart( recipientid, senderid, data )
             else:
-                recipientid,msgtype,senderid = remap_utils.split_prefix(msgprefix)
-                if msgtype == "showhands":
-                    self.handle_showhands( recipientid, senderid, data )
-                elif msgtype == "jobstart":
-                    #if recipientid == self.nodeid:
-                    self.handle_jobstart( recipientid, senderid, data )
-                else:
-                    # Forward to all cores for their processing.
-                    self.lpub.send(msg)
+                # Forward to all cores for their processing.
+                self.lpub.send(msg)
             return True
         except nn.NanoMsgAPIError as e:
             return False
