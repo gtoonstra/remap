@@ -166,7 +166,6 @@ class CoreDaemon( object ):
 
             plugin = self.load_plugin( self.workertype )
             self.worker = plugin.create_worker( app, appconfig, workdata )
-            self.worker.prepare()
         else:
             logger.warn("Unknown personal message received from node: %s"%( msgtype ))
 

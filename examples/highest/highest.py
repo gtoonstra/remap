@@ -23,7 +23,7 @@ def prepare( line ):
     vertex = ( int(elems[1]), out )
     return elems[0], vertex
 
-def compute( send_fn, superstep, vertex, messages ):
+def compute( forward, sub, unsub, superstep, vertex, messages ):
     (val, out) = vertex
 
     halt = True
@@ -38,7 +38,8 @@ def compute( send_fn, superstep, vertex, messages ):
     vertex = (val,out)
 
     for vertex_id in out:
-        send_fn( vertex_id, "%d"%( val ))
+        forward( vertex_id, "%d"%( val ))
 
     return vertex, halt
+
 

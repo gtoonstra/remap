@@ -11,13 +11,13 @@
 #define NN_IN 1
 #define NN_OUT 2
 
-const char *vertex_control_channel = "_vertex_control";
+const char *vertex_control_channel = "+vertex_control";
 
 int mode = MODE_RECEIVING;
 
 int main (int argc, char **argv)
 {
-    struct nn_pollfd pfd[3];
+    struct nn_pollfd pfd[2];
     int rc;
     void *buf = NULL;
 
@@ -25,7 +25,7 @@ int main (int argc, char **argv)
 
     int pub = nn_socket (AF_SP, NN_PUB);
     assert (pub >= 0);
-    assert (nn_bind (pub, "tcp://0.0.0.0:8688") >= 0);
+    assert (nn_bind (pub, "tcp://0.0.0.0:8690") >= 0);
 
     int sub = nn_socket (AF_SP, NN_SUB);
     assert (sub >= 0);
@@ -36,11 +36,7 @@ int main (int argc, char **argv)
     int controlsub = nn_socket (AF_SP, NN_SUB);
     assert (controlsub >= 0);
     assert (nn_setsockopt (controlsub, NN_SUB, NN_SUB_SUBSCRIBE, vertex_control_channel, strlen(vertex_control_channel)) >= 0);
-    assert (nn_connect (controlsub, "tcp://0.0.0.0:8687") >= 0);
-
-    int controlpub = nn_socket (AF_SP, NN_PUB);
-    assert (controlpub >= 0);
-    assert (nn_connect (controlpub, "tcp://0.0.0.0:8686") >= 0);
+    assert (nn_connect (controlsub, "tcp://localhost:8687") >= 0);
 
     printf("Ready for polling\n" );
 
@@ -50,14 +46,13 @@ int main (int argc, char **argv)
     pfd[0].events = 0;//NN_POLLOUT;
     pfd[1].fd = sub;
     pfd[1].events = NN_POLLIN;
-    pfd[2].fd = controlsub;
-    pfd[2].events = NN_POLLIN;
+    //pfd[2].fd = controlsub;
+    //pfd[2].events = NN_POLLIN;
 
     while (1) {
-        rc = nn_poll (pfd, 3, 2000);
+        rc = nn_poll (pfd, 2, 2000);
         if (rc == 0) {
             // timeout. Check if we need to continue
-            printf("Timeout\n" );
             continue;
         }
         if (rc == -1) {
@@ -71,8 +66,7 @@ int main (int argc, char **argv)
         }
         if (pfd [1].revents & NN_POLLIN) {
             // vertex SUB is receiving a message
-            printf("vertex SUB message ready\n" );
-            rc = nn_recv (sub, buf, NN_MSG, NN_DONTWAIT);
+            rc = nn_recv (sub, &buf, NN_MSG, NN_DONTWAIT);
             if ( rc < 0 ) {
                 if ( rc == EAGAIN ) {
                     printf( "Poll indicated readiness to read, but returned EAGAIN\n" );
@@ -81,9 +75,18 @@ int main (int argc, char **argv)
                 break;
             } else {
                 // do something with buf and rc (len)
-                nn_freemsg (buf);
+                char tst[100] = {"\0"};
+                snprintf( tst, 100, "%s", buf );
+                printf( "%s\n", tst );
+
+                // sheer violation of POLLOUT, but who cares..?
+                nn_send(pub, &buf, NN_MSG, NN_DONTWAIT );
+
+                // no need to deallocate. We just did zero copy.
+                // nn_freemsg (buf);
             }
         }
+        /*
         if (pfd [2].revents & NN_POLLIN) {
             // control SUB is receiving a message
             printf("control SUB message ready\n" );
@@ -99,6 +102,7 @@ int main (int argc, char **argv)
                 nn_freemsg (buf);
             }
         }
+        */
     }
 
     nn_shutdown (controlsub, 0);

@@ -135,21 +135,23 @@ class Initiator( Monitor ):
     # -------
 
     def update_corestatus( self, recipientid, senderid, data ):
-        key = self.manager.get_work_key( data )
-        if key in self.allocatedtasks:
-            job = self.allocatedtasks[ key ]
-            job["ts_finish"] = time.time() + 7
+        if self.manager != None:
+            key = self.manager.get_work_key( data )
+            if key in self.allocatedtasks:
+                job = self.allocatedtasks[ key ]
+                job["ts_finish"] = time.time() + 7
 
     def update_corecomplete( self, recipientid, senderid, data ):
-        key = self.manager.get_work_key( data )
-        logger.info( "Job %s completed."%( key ) )
-        if key in self.allocatedtasks:
-            job = self.allocatedtasks[ key ]
-            task = self.tasks[ key ]
-            self.completedtasks[ key ] = task
-            del self.tasks[ key ]
-            del self.allocatedtasks[ key ]
-            logger.info( "%d tasks left, %d tasks committed, %d tasks complete, %d tasks failed."%( len(self.tasks), len(self.allocatedtasks), len(self.completedtasks), len(self.rejectedtasks) ))
+        if self.manager != None:
+            key = self.manager.get_work_key( data )
+            logger.info( "Job %s completed."%( key ) )
+            if key in self.allocatedtasks:
+                job = self.allocatedtasks[ key ]
+                task = self.tasks[ key ]
+                self.completedtasks[ key ] = task
+                del self.tasks[ key ]
+                del self.allocatedtasks[ key ]
+                logger.info( "%d tasks left, %d tasks committed, %d tasks complete, %d tasks failed."%( len(self.tasks), len(self.allocatedtasks), len(self.completedtasks), len(self.rejectedtasks) ))
 
     def update_hands( self, recipientid, senderid, data ):
         # "%s.raisehand.%s"%( senderid, self.nodeid ), {"cores":3,"interruptable":0}
@@ -268,7 +270,9 @@ class Initiator( Monitor ):
             if self.manager.module_tracks_progress():
                 if not self.manager.check_progress( len(self.tasks) ):
                     self.manager.finish()
+                    self.manager = None
                     self.job_status = "waiting"
+                    logger.info("Vertex job complete")
             else:
                 if time.time() - self.last_check <= 4:
                     return

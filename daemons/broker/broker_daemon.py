@@ -4,6 +4,7 @@ import nanomsg as nn
 from nanomsg import wrapper as nn_wrapper
 import pybonjour
 import logging
+import time
 from bonjour_register import BonjourRegistration
 
 logging.basicConfig( level=logging.INFO ) 
@@ -30,8 +31,13 @@ if __name__ == "__main__":
     lsub.set_string_option( nn.SUB, nn.SUB_SUBSCRIBE, "")
 
     # expose this service over bonjour
-    b = BonjourRegistration( "broker", "_remap._tcp", 8687 )
-    b.start()
+    bv = BonjourRegistration( "vertexbroker", "_vertexremap._tcp", 8689 )
+    bv.start()
+
+    time.sleep( 1 )
+
+    br = BonjourRegistration( "broker", "_remap._tcp", 8687 )
+    br.start()
 
     # move messages between them
     dev = nn.Device( lsub, lpub )
