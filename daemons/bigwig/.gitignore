@@ -1,6 +1,11 @@
 autom4te.cache/
 compile
+ckefile
+Makefile.in
+config.status
+depcomp
 configure
 install-sh
 missing
+Makefile
 
