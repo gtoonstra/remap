@@ -9,7 +9,7 @@ from bonjour_register import BonjourRegistration
 logging.basicConfig( level=logging.INFO ) 
 
 # logger = logging.getLogger(__name__)
-logger = logging.getLogger("NodeDaemon")
+logger = logging.getLogger("BrokerDaemon")
 
 if __name__ == "__main__":
     # Interactions between brokers not implemented yet, probably requires C
