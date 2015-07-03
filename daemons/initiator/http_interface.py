@@ -80,6 +80,16 @@ class NodesListApi(Resource):
         monitor.refresh_nodes( args["priority"] )
         return "", 202
 
+    def put(self):
+        args = self.reqparse.parse_args()
+        monitor.refresh_nodes( args["priority"] )
+        return "", 200
+
+    def delete(self):
+        args = self.reqparse.parse_args()
+        monitor.refresh_nodes( args["priority"] )
+        return "", 200
+
 class JobApi(Resource):
     def __init__(self):
         #self.reqparse = reqparse.RequestParser()
