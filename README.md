@@ -1,17 +1,19 @@
 # remap
 
-Remap is an distribution execution engine (for lack of a better description) written in 100% pure python. You can kick off distributed processes like map/reduce from a remap monitor. The platform figures out which nodes and cores are available to run the jobs on and it will distribute the work across those nodes and track its progress.
+Remap is capable of running many cores in a distributed fashion over the network and orchestrate work. It's impossible to make a 100% generic daemon that does this, so there are modules involved that direct the process flow and status tracking of the workers on the network, which eventually determines how the algorithm behaves.
 
-At the moment map/reduce is implemented and working; that is... the monitor, management and execution bit. You need to use a REST client to kick off the job from the monitor with a bit of simple json. Work is in progress to make that process a bit easier to understand.
+Remap is mostly written in pure python with the exception of a specialized broker for "vertex" tasks. The platform figures out if and how many nodes and cores are available to run your algorithm. The way this works is that you have a python script file with your map/reduce or vertex functions, which must be available to all nodes (either locally copied or from a network drive). Then you just start the job from the monitor and watch the fireworks.
 
-Remap is very new and targeted at small-scale installations. The whole idea of remap is for developers, researchers and tinkerers to be able to put an environment together very quickly, so you can get to your algorithm implementations as quickly as possible.
+Remap uses an HTTP Rest interface. See the "http_interface" file (which should be really easy to read) for the endpoints. Remap is integrated with airflow too (see airbnb), so you can have pretty advanced workflows where map/reduce or vertex jobs get involved.
 
-So the focus of this implementation is on:
-- Very low complexity and number of steps for installation
-- Can run locally on a single machine or on a couple of machines without much effort
-- Sensible, minimalistic API that doesn't get in your way (you have full control over the data flow in code)
-- Relies on mature projects to solve 'the difficult stuff' (distributed filesystems, high performance messaging, etc)
-- Input and output files are always in an interpretable format, but you decide that.
+Remap is too new for serious production work, so it's targeted at small-scale installations. The whole idea of remap is for developers, researchers and tinkerers to be able to put an environment together very quickly, so you can work on your algorithm implementations as quickly as possible.
+
+Other issues I think are important:
+- Minimal code quantity and steps for installation
+- Run locally on a single machine or on a couple of machines without much effort
+- Sensible, minimalistic API that doesn't get in your way (you have full control over the data flow in code, maybe even too much)
+- Rely on mature projects to solve 'difficult stuff' (distributed filesystems, high performance messaging, etc)
+- Input and output files can remain in an interpretable format, but you eventually decide that.
 
 If this sounds interesting, please follow the steps on the wiki to take it for a quick test run:
 
